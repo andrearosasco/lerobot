@@ -22,6 +22,10 @@ from lerobot.configs import parser
 from lerobot.configs.default import EvalConfig
 from lerobot.configs.policies import PreTrainedConfig
 
+import debugpy
+debugpy.listen(5678)
+debugpy.wait_for_client()
+
 
 @dataclass
 class EvalPipelineConfig:

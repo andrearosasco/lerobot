@@ -22,6 +22,7 @@ TODO(alexander-soare):
 
 import math
 from collections import deque
+import time
 from typing import Callable
 
 import einops
@@ -211,12 +212,15 @@ class DiffusionModel(nn.Module):
     def conditional_sample(
         self, batch_size: int, global_cond: Tensor | None = None, generator: torch.Generator | None = None
     ) -> Tensor:
+        start_time = time.perf_counter()
         device = get_device_from_parameters(self)
         dtype = get_dtype_from_parameters(self)
 
+        population = 100
+        global_cond = global_cond.unsqueeze(1).expand(-1, population, -1) if global_cond is not None else None
         # Sample prior.
         sample = torch.randn(
-            size=(batch_size, self.config.horizon, self.config.action_feature.shape[0]),
+            size=(batch_size, population, self.config.horizon, self.config.action_feature.shape[0]),
             dtype=dtype,
             device=device,
             generator=generator,
@@ -234,6 +238,8 @@ class DiffusionModel(nn.Module):
             # Compute previous image: x_t -> x_t-1
             sample = self.noise_scheduler.step(model_output, t, sample, generator=generator).prev_sample
 
+        sample = sample[:, 0]  # take the first sample from the population
+        print(f"DiffusionModel.conditional_sample: {time.perf_counter() - start_time:.2f}s")
         return sample
 
     def _prepare_global_conditioning(self, batch: dict[str, Tensor]) -> Tensor:
@@ -673,15 +679,20 @@ class DiffusionConditionalUnet1d(nn.Module):
             (B, T, input_dim) diffusion model prediction.
         """
         # For 1D convolutions we'll need feature dimension first.
-        x = einops.rearrange(x, "b t d -> b d t")
+        x = einops.rearrange(x, "b p t d -> b p d t")
 
         timesteps_embed = self.diffusion_step_encoder(timestep)
 
         # If there is a global conditioning feature, concatenate it to the timestep embedding.
+        timesteps_embed = timesteps_embed.unsqueeze(1).expand(-1, x.shape[1], -1)
         if global_cond is not None:
             global_feature = torch.cat([timesteps_embed, global_cond], axis=-1)
         else:
             global_feature = timesteps_embed
+
+        b, p = x.shape[0], x.shape[1]
+        x = x.reshape(x.shape[0] * x.shape[1], x.shape[2], x.shape[3])
+        global_feature = global_feature.reshape(global_feature.shape[0] * global_feature.shape[1], global_feature.shape[2])
 
         # Run encoder, keeping track of skip features to pass to the decoder.
         encoder_skip_features: list[Tensor] = []
@@ -704,6 +715,7 @@ class DiffusionConditionalUnet1d(nn.Module):
         x = self.final_conv(x)
 
         x = einops.rearrange(x, "b d t -> b t d")
+        x = x.reshape(b, p, x.shape[1], x.shape[2])
         return x
 
 
