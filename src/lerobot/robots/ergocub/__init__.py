@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2024 Istituto Italiano di Tecnologia. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,3 +16,4 @@
 
 from .configuration_ergocub import ErgoCubConfig
 from .ergocub import ErgoCub
+from .yarp_encoders_bus import YarpEncodersBus

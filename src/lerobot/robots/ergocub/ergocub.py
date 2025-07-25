@@ -1,3 +1,19 @@
+#!/usr/bin/env python
+
+# Copyright 2024 Istituto Italiano di Tecnologia. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import uuid
 from typing import Any
 
@@ -7,54 +23,7 @@ from lerobot.robots.robot import Robot
 from lerobot.cameras import make_cameras_from_configs
 
 from .configuration_ergocub import ErgoCubConfig
-
-
-class EncodersInterface:
-    """Simple YARP encoders interface for reading joint positions."""
-    
-    def __init__(self, remote_prefix: str, local_prefix: str, control_boards: list[str], stream_name: str):
-        self.remote_prefix = remote_prefix
-        self.local_prefix = local_prefix
-        self.control_boards = control_boards
-        self.stream_name = stream_name
-        
-        # Initialize YARP network
-        yarp.Network.init()
-        
-        # Create ports for each control board
-        self.ports = {}
-        for board in control_boards:
-            self.ports[board] = yarp.Port()
-        
-    def connect(self):
-        """Connect to YARP encoder streams."""
-        for board in self.control_boards:
-            local_name = f"{self.local_prefix}/{self.stream_name}/{board}:i"
-            remote_name = f"{self.remote_prefix}/{board}/state:o"
-            self.ports[board].open(local_name)
-            yarp.Network.connect(remote_name, local_name)
-    
-    def read(self):
-        """Read encoder data from YARP streams."""
-        data = {}
-        
-        for board in self.control_boards:
-            # Read joint positions from YARP
-            bottle = yarp.Bottle()
-            if self.ports[board].read(bottle):
-                # Convert YARP bottle to numpy array
-                values = []
-                for i in range(bottle.size()):
-                    values.append(bottle.get(i).asFloat64())
-                data[board] = {"values": np.array(values)}
-        
-        # Return data in a format similar to polars DataFrame
-        return [{"data": data}]
-    
-    def close(self):
-        """Close YARP connections."""
-        for port in self.ports.values():
-            port.close()
+from .yarp_encoders_bus import YarpEncodersBus
 
 
 class ErgoCub(Robot):
@@ -88,8 +57,8 @@ class ErgoCub(Robot):
                 other_cameras = make_cameras_from_configs({cam_name: cam_config})
                 self.cameras.update(other_cameras)
 
-        # Encoders interface (non-camera data)
-        self.encoders_interface = EncodersInterface(
+        # Encoders bus (non-camera data)
+        self.encoders_bus = YarpEncodersBus(
             remote_prefix=cfg.remote_prefix,
             local_prefix=f"{cfg.local_prefix}/{self.session_id}",
             control_boards=cfg.encoders_control_boards,
@@ -101,8 +70,8 @@ class ErgoCub(Robot):
         for cam in self.cameras.values():
             cam.connect()
         
-        # Connect encoders interface
-        self.encoders_interface.connect()
+        # Connect encoders bus
+        self.encoders_bus.connect()
         self._is_connected = True
 
     def disconnect(self):
@@ -111,7 +80,7 @@ class ErgoCub(Robot):
             cam.disconnect()
         
         # Disconnect encoders
-        self.encoders_interface.close()
+        self.encoders_bus.disconnect()
         yarp.Network.fini()
         self._is_connected = False
 
@@ -127,9 +96,9 @@ class ErgoCub(Robot):
                 obs[f"{cam_name}_depth"] = cam_data["depth"]
         
         # Read encoder data
-        for data_row in self.encoders_interface.read():
-            for board_name, board_data in data_row["data"].items():
-                obs[f"state/joint_positions/{board_name}"] = board_data["values"]
+        encoder_data = self.encoders_bus.sync_read("Present_Position")
+        for board_name, joint_positions in encoder_data.items():
+            obs[f"state/joint_positions/{board_name}"] = joint_positions
         
         return obs
 
@@ -144,7 +113,13 @@ class ErgoCub(Robot):
     @property
     def is_connected(self) -> bool:
         """Whether the robot is currently connected."""
-        return self._is_connected
+        # Check if cameras are connected
+        cameras_connected = all(cam.is_connected for cam in self.cameras.values()) if self.cameras else True
+        
+        # Check if encoders bus is connected
+        encoders_connected = self.encoders_bus.is_connected
+        
+        return self._is_connected and cameras_connected and encoders_connected
 
     @property
     def is_calibrated(self) -> bool:
