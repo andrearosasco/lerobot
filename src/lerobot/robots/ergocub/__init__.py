@@ -15,4 +15,4 @@
 # limitations under the License.
 
 from .configuration_ergocub import ErgoCubConfig
-from .robot_ergocub import ErgoCub
+from .ergocub import ErgoCub
