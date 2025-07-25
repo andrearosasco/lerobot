@@ -55,6 +55,27 @@ python -m lerobot.record \
   --dataset.num_episodes=25 \
   --dataset.single_task="Grab and handover the red cube to the other arm"
 ```
+
+Example recording with MetaCub:
+```shell
+python -m metacub_dashboard.record \
+  --robot.type=metacub \
+  --robot.remote_prefix="/ergocubSim" \
+  --robot.local_prefix="/metacub_dashboard" \
+  --robot.cameras="{
+    agentview: {type: yarp, yarp_name: agentview, width: 640, height: 480, fps: 30},
+    wrist_camera: {type: yarp, yarp_name: wrist, width: 320, height: 240, fps: 30, use_depth: true}
+  }" \
+  --robot.encoders_control_boards=[head,left_arm,right_arm,torso] \
+  --teleop.type=metacub_teleop \
+  --teleop.remote_prefix="/metaControllClient" \
+  --teleop.local_prefix="/metacub_dashboard" \
+  --teleop.control_boards=[neck,left_arm,right_arm,fingers] \
+  --display_data=true \
+  --dataset.repo_id=${HF_USER}/metacub-manipulation \
+  --dataset.num_episodes=50 \
+  --dataset.single_task="Pick up objects and place them in containers"
+```
 """
 
 import logging
@@ -68,6 +89,7 @@ from lerobot.cameras import (  # noqa: F401
 )
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.yarp.configuration_yarp import YarpCameraConfig  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.image_writer import safe_stop_image_writer
@@ -85,6 +107,7 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    ergocub,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -95,6 +118,7 @@ from lerobot.teleoperators import (  # noqa: F401
     make_teleoperator_from_config,
     so100_leader,
     so101_leader,
+    metaquest,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
 from lerobot.utils.control_utils import (
