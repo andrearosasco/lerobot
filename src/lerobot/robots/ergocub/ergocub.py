@@ -165,16 +165,13 @@ class ErgoCub(Robot):
         Args:
             action (dict[str, Any]): Dictionary representing the desired pose action.
                 Expected format matches action_features:
-                - neck.{x,y,z}: neck position
                 - neck.{qx,qy,qz,qw}: neck orientation (quaternion)
-                - left_arm.{x,y,z}: left arm position
-                - left_arm.{qx,qy,qz,qw}: left arm orientation (quaternion)
-                - right_arm.{x,y,z}: right arm position  
-                - right_arm.{qx,qy,qz,qw}: right arm orientation (quaternion)
-                - fingers.{finger_name}.{x,y,z}: finger positions
+                - left_arm.{x,y,z,qx,qy,qz,qw}: left arm position + orientation
+                - right_arm.{x,y,z,qx,qy,qz,qw}: right arm position + orientation
+                - fingers.{left|right}.{thumb|index|middle|ring|little}.{x,y,z}: finger positions
 
         Returns:
-            dict[str, Any]: The action actually sent to the teleoperator.
+            dict[str, Any]: The action actually sent to the robot system.
             
         Raises:
             DeviceNotConnectedError: if robot is not connected.
@@ -182,10 +179,6 @@ class ErgoCub(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
             
-        # The ErgoCub robot receives pose commands from the teleoperator
-        # This method validates and forwards the action to the teleoperator system
-        # The actual joint control is handled by the teleoperator
-        
         # Validate action format matches expected action_features
         expected_keys = set(self.action_features.keys())
         received_keys = set(action.keys())
@@ -211,11 +204,63 @@ class ErgoCub(Robot):
                     action_dict[key] = float(action[idx])
                     idx += 1
                 else:
-                    action_dict[key] = 0.0  # Default value for missing elements
+                    # Default values: 1.0 for quaternion w components, 0.0 for others
+                    action_dict[key] = 1.0 if key.endswith('.qw') else 0.0
                     
-            return action_dict
+            action = action_dict
+        
+        # Validate and sanitize action values
+        validated_action = {}
+        for key, expected_type in self.action_features.items():
+            if key in action:
+                try:
+                    # Ensure value is of correct type
+                    validated_action[key] = expected_type(action[key])
+                    
+                    # Clamp quaternion components to valid range [-1, 1]
+                    if key.endswith(('.qx', '.qy', '.qz', '.qw')):
+                        validated_action[key] = max(-1.0, min(1.0, validated_action[key]))
+                        
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Invalid value for {key}: {action[key]} ({e}). Using default.")
+                    validated_action[key] = 1.0 if key.endswith('.qw') else 0.0
+            else:
+                # Use default values for missing keys
+                validated_action[key] = 1.0 if key.endswith('.qw') else 0.0
+        
+        # Normalize quaternions to ensure they are valid
+        for prefix in ['neck', 'left_arm', 'right_arm']:
+            qx_key = f"{prefix}.qx"
+            qy_key = f"{prefix}.qy" 
+            qz_key = f"{prefix}.qz"
+            qw_key = f"{prefix}.qw"
             
-        return action
+            if all(key in validated_action for key in [qx_key, qy_key, qz_key, qw_key]):
+                # Normalize quaternion
+                qx, qy, qz, qw = validated_action[qx_key], validated_action[qy_key], validated_action[qz_key], validated_action[qw_key]
+                norm = np.sqrt(qx*qx + qy*qy + qz*qz + qw*qw)
+                
+                if norm > 1e-6:  # Avoid division by zero
+                    validated_action[qx_key] = qx / norm
+                    validated_action[qy_key] = qy / norm  
+                    validated_action[qz_key] = qz / norm
+                    validated_action[qw_key] = qw / norm
+                else:
+                    # Use identity quaternion if norm is too small
+                    validated_action[qx_key] = 0.0
+                    validated_action[qy_key] = 0.0
+                    validated_action[qz_key] = 0.0
+                    validated_action[qw_key] = 1.0
+        
+        # Log the action for debugging (first few keys only)
+        sample_keys = list(validated_action.keys())[:5]
+        logger.debug(f"Sending action (sample): {{{', '.join(f'{k}: {validated_action[k]:.3f}' for k in sample_keys)}, ...}}")
+        
+        # Here you would typically send the action to the actual robot hardware
+        # For now, we just return the validated action as the "sent" action
+        # TODO: Implement actual robot communication (e.g., YARP, ROS, etc.)
+        
+        return validated_action
 
     @property
     def is_connected(self) -> bool:

@@ -19,6 +19,7 @@ from typing import Any
 
 import numpy as np
 import yarp
+from lerobot.errors import DeviceNotConnectedError
 from lerobot.teleoperators.teleoperator import Teleoperator
 
 from .configuration_metaquest import MetaQuestConfig
@@ -114,26 +115,154 @@ class MetaQuest(Teleoperator):
         self._is_connected = False
 
     def get_action(self) -> dict[str, Any]:
+        """
+        Get action from MetaQuest teleoperator in ergoCub-compatible format.
+        Returns flattened dictionary matching ergoCub.action_features.
+        """
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
         for data_row in self.action_interface.read():
             action = {}
-            for board_name, board_data in data_row["data"].items():
-                action[f"action/{board_name}"] = board_data
+            board_data = data_row["data"]
+            
+            # Process each control board
+            for board_name in self.cfg.control_boards:
+                if board_name in board_data:
+                    data = board_data[board_name]
+                    
+                    if board_name == "neck":
+                        # Map neck data to quaternion format (4 values: qx, qy, qz, qw)
+                        if len(data) >= 4:
+                            action["neck.qx"] = float(data[0])
+                            action["neck.qy"] = float(data[1]) 
+                            action["neck.qz"] = float(data[2])
+                            action["neck.qw"] = float(data[3])
+                        else:
+                            # Fill missing values with defaults
+                            action["neck.qx"] = float(data[0]) if len(data) > 0 else 0.0
+                            action["neck.qy"] = float(data[1]) if len(data) > 1 else 0.0
+                            action["neck.qz"] = float(data[2]) if len(data) > 2 else 0.0
+                            action["neck.qw"] = 1.0  # Default quaternion w
+                    
+                    elif board_name in ["left_arm", "right_arm"]:
+                        # Map arm data to position + quaternion format (7 values: x,y,z,qx,qy,qz,qw)
+                        if len(data) >= 7:
+                            action[f"{board_name}.x"] = float(data[0])
+                            action[f"{board_name}.y"] = float(data[1])
+                            action[f"{board_name}.z"] = float(data[2])
+                            action[f"{board_name}.qx"] = float(data[3])
+                            action[f"{board_name}.qy"] = float(data[4])
+                            action[f"{board_name}.qz"] = float(data[5])
+                            action[f"{board_name}.qw"] = float(data[6])
+                        else:
+                            # Fill missing values with defaults
+                            for i, suffix in enumerate(["x", "y", "z", "qx", "qy", "qz", "qw"]):
+                                if i < len(data):
+                                    action[f"{board_name}.{suffix}"] = float(data[i])
+                                elif suffix == "qw":
+                                    action[f"{board_name}.{suffix}"] = 1.0  # Default quaternion w
+                                else:
+                                    action[f"{board_name}.{suffix}"] = 0.0
+                    
+                    elif board_name == "fingers":
+                        # Map finger data to nested finger format (10 fingers × 3 values each)
+                        # Assuming data is a 10x3 matrix or flattened 30-element array
+                        finger_names = ["thumb", "index", "middle", "ring", "little"]
+                        sides = ["left", "right"]
+                        
+                        if isinstance(data, np.ndarray) and data.shape == (10, 3):
+                            # Handle 10x3 matrix format
+                            finger_idx = 0
+                            for side in sides:
+                                for finger_name in finger_names:
+                                    if finger_idx < data.shape[0]:
+                                        action[f"fingers.{side}.{finger_name}.x"] = float(data[finger_idx, 0])
+                                        action[f"fingers.{side}.{finger_name}.y"] = float(data[finger_idx, 1])
+                                        action[f"fingers.{side}.{finger_name}.z"] = float(data[finger_idx, 2])
+                                        finger_idx += 1
+                                    else:
+                                        # Fill missing fingers with zeros
+                                        action[f"fingers.{side}.{finger_name}.x"] = 0.0
+                                        action[f"fingers.{side}.{finger_name}.y"] = 0.0
+                                        action[f"fingers.{side}.{finger_name}.z"] = 0.0
+                        elif isinstance(data, (list, np.ndarray)) and len(data) >= 30:
+                            # Handle flattened 30-element array
+                            finger_idx = 0
+                            for side in sides:
+                                for finger_name in finger_names:
+                                    base_idx = finger_idx * 3
+                                    if base_idx + 2 < len(data):
+                                        action[f"fingers.{side}.{finger_name}.x"] = float(data[base_idx])
+                                        action[f"fingers.{side}.{finger_name}.y"] = float(data[base_idx + 1])
+                                        action[f"fingers.{side}.{finger_name}.z"] = float(data[base_idx + 2])
+                                    else:
+                                        action[f"fingers.{side}.{finger_name}.x"] = 0.0
+                                        action[f"fingers.{side}.{finger_name}.y"] = 0.0
+                                        action[f"fingers.{side}.{finger_name}.z"] = 0.0
+                                    finger_idx += 1
+                        else:
+                            # Fill all fingers with zeros if data format is unexpected
+                            for side in sides:
+                                for finger_name in finger_names:
+                                    action[f"fingers.{side}.{finger_name}.x"] = 0.0
+                                    action[f"fingers.{side}.{finger_name}.y"] = 0.0
+                                    action[f"fingers.{side}.{finger_name}.z"] = 0.0
+            
             return action
-        return {}
+        
+        # Return empty action dict with default values if no data
+        return {key: 1.0 if key.endswith('.qw') else 0.0 for key in self.action_features.keys()}
 
     @property
     def action_features(self):
-        # From metacub_dashboard/interfaces/interfaces.py:ActionInterface.DEFAULT_BOARD_FORMATS
-        # This is a bit tricky because the format is nested.
-        # For simplicity, we'll flatten it and assume float32.
-        # TODO: This might need to be adjusted based on how the actions are actually used.
-        features = {
-            "action/neck": {"shape": (9,), "dtype": "float32", "space": "joint_positions"},
-            "action/left_arm": {"shape": (7,), "dtype": "float32", "space": "joint_positions"},
-            "action/right_arm": {"shape": (7,), "dtype": "float32", "space": "joint_positions"},
-            "action/fingers": {"shape": (10, 3), "dtype": "float32", "space": "joint_positions"},
+        """
+        Return action features matching ergoCub format for compatibility.
+        Uses flattened dot-notation keys to match ergoCub.action_features.
+        """
+        # Define nested structure that mirrors ergoCub action hierarchy
+        nested_actions = {
+            "neck": {
+                "qx": float, "qy": float, "qz": float, "qw": float,
+            },
+            "left_arm": {
+                "x": float, "y": float, "z": float,
+                "qx": float, "qy": float, "qz": float, "qw": float,
+            },
+            "right_arm": {
+                "x": float, "y": float, "z": float,
+                "qx": float, "qy": float, "qz": float, "qw": float,
+            },
+            "fingers": {
+                "left": {
+                    "thumb": {"x": float, "y": float, "z": float},
+                    "index": {"x": float, "y": float, "z": float},
+                    "middle": {"x": float, "y": float, "z": float},
+                    "ring": {"x": float, "y": float, "z": float},
+                    "little": {"x": float, "y": float, "z": float},
+                },
+                "right": {
+                    "thumb": {"x": float, "y": float, "z": float},
+                    "index": {"x": float, "y": float, "z": float},
+                    "middle": {"x": float, "y": float, "z": float},
+                    "ring": {"x": float, "y": float, "z": float},
+                    "little": {"x": float, "y": float, "z": float},
+                },
+            },
         }
-        return {k: v for k, v in features.items() if k.split("/")[1] in self.cfg.control_boards}
+        
+        return self._flatten_nested_dict(nested_actions)
+    
+    def _flatten_nested_dict(self, nested_dict: dict, prefix: str = "") -> dict[str, type]:
+        """Flatten a nested dictionary into dot-separated keys."""
+        flattened = {}
+        for key, value in nested_dict.items():
+            new_key = f"{prefix}.{key}" if prefix else key
+            if isinstance(value, dict):
+                flattened.update(self._flatten_nested_dict(value, new_key))
+            else:
+                flattened[new_key] = value
+        return flattened
 
     @property
     def feedback_features(self) -> dict:
