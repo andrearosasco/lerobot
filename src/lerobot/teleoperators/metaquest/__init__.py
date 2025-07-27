@@ -15,4 +15,4 @@
 # limitations under the License.
 
 from .configuration_metaquest import MetaQuestConfig
-from .teleop_metaquest import MetaQuest
+from .metaquest import MetaQuest
