@@ -16,4 +16,4 @@
 
 from .configuration_ergocub import ErgoCubConfig
 from .ergocub import ErgoCub
-from .yarp_encoders_bus import YarpEncodersBus
+from ...motors.ergocub.yarp_encoders_bus import YarpEncodersBus

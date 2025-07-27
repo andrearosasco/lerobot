@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 class YarpEncodersBus:
     """
-    YARP encoders interface for reading joint positions from ergoCub robot.
+    ergoCub encoders interface for reading joint positions from ergoCub robot.
     
     This class provides a standardized interface for reading encoder data from
     YARP streams, following the LeRobot patterns used by motor buses.
