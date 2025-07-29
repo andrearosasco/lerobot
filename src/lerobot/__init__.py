@@ -170,7 +170,7 @@ available_datasets = sorted(
 # lists all available policies from `lerobot/policies`
 available_policies = ["act", "diffusion", "tdmpc", "vqbet"]
 
-# lists all available robots from `lerobot/robot_devices/robots`
+# lists all available robots from `lerobot/robots`
 available_robots = [
     "koch",
     "koch_bimanual",
@@ -180,14 +180,14 @@ available_robots = [
     "ergocub",
 ]
 
-# lists all available cameras from `lerobot/robot_devices/cameras`
+# lists all available cameras from `lerobot/cameras`
 available_cameras = [
     "opencv",
     "intelrealsense",
     "yarp",
 ]
 
-# lists all available motors from `lerobot/robot_devices/motors`
+# lists all available motors from `lerobot/motors`
 available_motors = [
     "dynamixel",
     "feetech",
