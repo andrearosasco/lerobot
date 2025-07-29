@@ -58,25 +58,26 @@ python -m lerobot.record \
 
 Example recording with MetaCub:
 ```shell
-python -m metacub_dashboard.record \
-  --robot.type=metacub \
+python -m lerobot.record \
+  --robot.type=ergocub \
   --robot.remote_prefix="/ergocubSim" \
-  --robot.local_prefix="/metacub_dashboard" \
-  --robot.cameras="{
-    agentview: {type: yarp, yarp_name: agentview, width: 640, height: 480, fps: 30},
-    wrist_camera: {type: yarp, yarp_name: wrist, width: 320, height: 240, fps: 30, use_depth: true}
-  }" \
-  --robot.encoders_control_boards=[head,left_arm,right_arm,torso] \
-  --teleop.type=metacub_teleop \
+  --robot.local_prefix="/lerobot" \
+  --robot.cameras='{ agentview: {"type": "yarp", "yarp_name": "depthCamera", "width": 640, "height": 480, "fps": 30} }' \
+  --robot.encoders_control_boards='[head,left_arm,right_arm,torso]' \
+  --teleop.type=metaquest \
   --teleop.remote_prefix="/metaControllClient" \
-  --teleop.local_prefix="/metacub_dashboard" \
-  --teleop.control_boards=[neck,left_arm,right_arm,fingers] \
-  --display_data=true \
-  --dataset.repo_id=${HF_USER}/metacub-manipulation \
+  --teleop.local_prefix="/lerobot" \
+  --teleop.control_boards='[neck,left_arm,right_arm,fingers]' \
+  --display_data=false \
+  --dataset.repo_id=${HF_USER}/ergoCub-manipulation \
   --dataset.num_episodes=50 \
   --dataset.single_task="Pick up objects and place them in containers"
 ```
 """
+
+import debugpy
+debugpy.listen(("localhost", 5678))
+debugpy.wait_for_client()
 
 import logging
 import time

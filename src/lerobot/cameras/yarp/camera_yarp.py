@@ -38,56 +38,103 @@ class CameraInterface:
         # Initialize YARP network
         yarp.Network.init()
         
-        # Create ports
-        self.rgb_port = yarp.Port() if rgb_shape else None
-        self.depth_port = yarp.Port() if depth_shape else None
+        # Port objects will be created in connect() method
+        self.rgb_port = None
+        self.depth_port = None
+        self.yarp_rgb_image = None
+        self.yarp_depth_image = None
+        self.rgb_buffer = None
+        self.depth_buffer = None
         
     def connect(self):
         """Connect to YARP camera streams."""
-        if self.rgb_port:
-            rgb_local_name = f"{self.local_prefix}/{self.stream_name}/rgb:i"
-            rgb_remote_name = f"{self.remote_prefix}/{self.stream_name}/rgb:o"
-            self.rgb_port.open(rgb_local_name)
-            yarp.Network.connect(rgb_remote_name, rgb_local_name)
+        # Create and open RGB port if needed
+        if self.rgb_shape:
+            self.rgb_port = yarp.BufferedPortImageRgb()
+            self.rgb_port.open(f"{self.local_prefix}/{self.stream_name}/rgbImage:i")
             
-        if self.depth_port:
-            depth_local_name = f"{self.local_prefix}/{self.stream_name}/depth:i"
-            depth_remote_name = f"{self.remote_prefix}/{self.stream_name}/depth:o"
-            self.depth_port.open(depth_local_name)
-            yarp.Network.connect(depth_remote_name, depth_local_name)
+            self.yarp_rgb_image = yarp.ImageRgb()
+            self.yarp_rgb_image.resize(self.rgb_shape[0], self.rgb_shape[1])
+            self.rgb_buffer = bytearray(self.rgb_shape[0] * self.rgb_shape[1] * 3)
+            self.yarp_rgb_image.setExternal(self.rgb_buffer, self.rgb_shape[0], self.rgb_shape[1])
+            
+            rgb_remote_name = f"{self.remote_prefix}/{self.stream_name}/rgbImage:o"
+            rgb_local_name = f"{self.local_prefix}/{self.stream_name}/rgbImage:i"
+            
+            while not yarp.Network.connect(rgb_remote_name, rgb_local_name, "mjpeg"):
+                print(f"Waiting for RGB port {rgb_remote_name} to connect...")
+                time.sleep(0.1)
+            
+        # Create and open depth port if needed
+        if self.depth_shape:
+            self.depth_port = yarp.BufferedPortImageFloat()
+            self.depth_port.open(f"{self.local_prefix}/{self.stream_name}/depthImage:i")
+            
+            self.yarp_depth_image = yarp.ImageFloat()
+            self.yarp_depth_image.resize(self.depth_shape[0], self.depth_shape[1])
+            self.depth_buffer = bytearray(self.depth_shape[0] * self.depth_shape[1] * 4)
+            self.yarp_depth_image.setExternal(self.depth_buffer, self.depth_shape[0], self.depth_shape[1])
+            
+            depth_remote_name = f"{self.remote_prefix}/{self.stream_name}/depthImage:o"
+            depth_local_name = f"{self.local_prefix}/{self.stream_name}/depthImage:i"
+            
+            while not yarp.Network.connect(
+                depth_remote_name, depth_local_name,
+                "fast_tcp+send.portmonitor+file.bottle_compression_zlib+recv.portmonitor+file.bottle_compression_zlib+type.dll"
+            ):
+                print(f"Waiting for Depth port {depth_remote_name} to connect...")
+                time.sleep(0.1)
     
     def read(self):
         """Read data from YARP camera streams."""
         data = {}
         
-        if self.rgb_port:
-            # Read RGB image
-            img = yarp.ImageRgb()
-            if self.rgb_port.read(img):
-                # Convert YARP image to numpy array
-                h, w = img.height(), img.width()
-                rgb_array = np.frombuffer(img.getRawImage(), dtype=np.uint8)
-                rgb_array = rgb_array.reshape((h, w, 3))
-                data["rgb"] = rgb_array
+        if self.rgb_shape and self.rgb_port:
+            # Read RGB image with non-blocking read and wait loop
+            read_attempts = 0
+            while (image_data := self.rgb_port.read(False)) is None:
+                read_attempts += 1
+                # Print warning every 1000 attempts (approximately every few seconds)
+                if read_attempts % 1000 == 0:
+                    print(f"Still waiting for RGB data from {self.stream_name} (attempt {read_attempts})")
+                # Small sleep to avoid busy waiting
+                time.sleep(0.001)  # 1 millisecond sleep
+                    
+            # Copy data to pre-allocated image and extract as numpy array
+            self.yarp_rgb_image.copy(image_data)
+            rgb_array = np.frombuffer(self.rgb_buffer, dtype=np.uint8).reshape(
+                self.rgb_shape[1], self.rgb_shape[0], 3
+            ).copy()  # Create a copy to avoid buffer reuse issues
+            data["rgb"] = rgb_array
                 
-        if self.depth_port:
-            # Read depth image
-            img = yarp.ImageFloat()
-            if self.depth_port.read(img):
-                # Convert YARP depth image to numpy array
-                h, w = img.height(), img.width()
-                depth_array = np.frombuffer(img.getRawImage(), dtype=np.float32)
-                depth_array = depth_array.reshape((h, w))
-                data["depth"] = depth_array
+        if self.depth_shape and self.depth_port:
+            # Read depth image with non-blocking read and wait loop
+            read_attempts = 0
+            while (image_data := self.depth_port.read(False)) is None:
+                read_attempts += 1
+                # Print warning every 1000 attempts (approximately every few seconds)
+                if read_attempts % 1000 == 0:
+                    print(f"Still waiting for depth data from {self.stream_name} (attempt {read_attempts})")
+                # Small sleep to avoid busy waiting
+                time.sleep(0.001)  # 1 millisecond sleep
+                    
+            # Copy data to pre-allocated image and extract as numpy array
+            self.yarp_depth_image.copy(image_data)
+            depth_array = (
+                np.frombuffer(self.depth_buffer, dtype=np.float32).reshape(
+                    self.depth_shape[1], self.depth_shape[0]
+                ).copy() * 1000  # Create a copy and convert to mm
+            ).astype(np.uint16)
+            data["depth"] = depth_array
         
         # Return data in a format similar to polars DataFrame
         return [{"data": data}]
     
     def close(self):
         """Close YARP connections."""
-        if self.rgb_port:
+        if hasattr(self, 'rgb_port') and self.rgb_port:
             self.rgb_port.close()
-        if self.depth_port:
+        if hasattr(self, 'depth_port') and self.depth_port:
             self.depth_port.close()
 
 

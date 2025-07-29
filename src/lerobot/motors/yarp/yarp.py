@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+import time
 from typing import Any
 
 import numpy as np
@@ -58,7 +59,7 @@ class YarpEncodersBus:
         # Create ports for each control board
         self.ports = {}
         for board in control_boards:
-            self.ports[board] = yarp.Port()
+            self.ports[board] = yarp.BufferedPortVector()
 
     @property
     def is_connected(self) -> bool:
@@ -92,7 +93,7 @@ class YarpEncodersBus:
                 continue
                 
             # Connect to remote port
-            if yarp.Network.connect(remote_name, local_name):
+            if yarp.Network.connect(remote_name, local_name, 'tcp'):
                 logger.debug(f"Connected {remote_name} -> {local_name}")
                 success_count += 1
             else:
@@ -144,20 +145,19 @@ class YarpEncodersBus:
         encoder_data = {}
         
         for board in self.control_boards:
-            bottle = yarp.Bottle()
+            # Use proper non-blocking read with waiting loop like working interface
+            read_attempts = 0
+            while (bottle := self.ports[board].read(False)) is None:
+                read_attempts += 1
+                # Print warning every 1000 attempts (approximately every few seconds)
+                if read_attempts % 1000 == 0:
+                    logger.warning(f"Still waiting for data from board {board} (attempt {read_attempts})")
+                # Small sleep to avoid busy waiting
+                time.sleep(0.001)  # 1 millisecond sleep
             
-            # Non-blocking read
-            if self.ports[board].read(bottle, shouldWait=False):
-                # Convert YARP bottle to numpy array
-                values = []
-                for i in range(bottle.size()):
-                    values.append(bottle.get(i).asFloat64())
-                encoder_data[board] = np.array(values, dtype=np.float32)
-            else:
-                # Return zeros if no data available (for compatibility)
-                # You might want to use previous values or handle this differently
-                logger.debug(f"No data available for board {board}")
-                encoder_data[board] = np.array([], dtype=np.float32)
+            # Convert YARP vector to numpy array using direct indexing
+            values = np.array([bottle[i] for i in range(bottle.size())], dtype=np.float32)
+            encoder_data[board] = values
         
         return encoder_data
 
