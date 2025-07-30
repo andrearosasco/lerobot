@@ -24,11 +24,17 @@ from lerobot.teleoperators.config import TeleoperatorConfig
 @dataclass
 class MetaQuestConfig(TeleoperatorConfig):
     name: str = "metaquest"
-    # YARP remote prefix for the action server
-    remote_prefix: str = "/metaControllClient"
-    # YARP local prefix for the action client. A session ID will be appended.
-    local_prefix: str = "/metaquest_dashboard"
-    # List of control boards for actions
+    
+    # FrameTransform client configuration
+    tf_device: str = "frameTransformClient"
+    tf_file: str = "ftc_yarp_only.xml"
+    tf_remote: str = ""  # Optional remote transform server prefix (leave empty for local mode)
+    
+    # Connection timeout and retry settings
+    connection_timeout: float = 10.0  # seconds to wait for connection
+    retry_attempts: int = 3  # number of connection attempts
+    
+    # List of control boards for actions (kept for compatibility)
     control_boards: List[str] = field(
-        default_factory=lambda: ["neck", "left_arm", "right_arm", "fingers"]
+        default_factory=lambda: ["head", "left_hand", "right_hand", "left_fingers", "right_fingers"]
     )

@@ -42,256 +42,400 @@ class MetaQuest(Teleoperator):
         # Initialize YARP network
         yarp.Network.init()
         
-        # YARP port will be created in connect() method
-        self.port = None
+        # FrameTransform client will be created in connect() method
+        self.tf_driver = None
+        self.tf_reader = None
+        self.matrix_buffer = yarp.Matrix(4, 4)
+        
+        # Finger frame mappings for MetaQuest
+        self.finger_index_pairs = [
+            ("thumb_tip", 1),
+            ("index_tip", 2), 
+            ("middle_tip", 3),
+            ("ring_tip", 4),
+            ("pinky_tip", 5)
+        ]
+
+    def __del__(self):
+        """Destructor to ensure proper cleanup and avoid memory leaks."""
+        try:
+            if self._is_connected:
+                self.disconnect()
+        except:
+            pass  # Ignore errors during cleanup
 
     def connect(self, calibrate: bool = True):
-        """Connect to YARP action streams."""
-        # Create and open YARP port
-        self.port = yarp.BufferedPortBottle()
-        self.port.open(f"{self.cfg.local_prefix}/{self.session_id}/action:i")
+        """Connect to iFrameTransform to get raw MetaQuest poses."""
+        # Check if YARP network is available
+        if not yarp.Network.checkNetwork():
+            raise DeviceNotConnectedError("YARP network is not available. Please start yarpserver first.")
         
-        # Connect to remote action port
-        remote_name = f"{self.cfg.remote_prefix}/action:o"
-        local_name = f"{self.cfg.local_prefix}/{self.session_id}/action:i"
+        # Set up frameTransformClient configuration
+        tf_client_cfg = yarp.Property()
+        tf_client_cfg.put("device", self.cfg.tf_device)
+        tf_client_cfg.put("filexml_option", self.cfg.tf_file)
+        tf_client_cfg.put("ft_client_prefix", f"/metaquest_{self.session_id}/tf")
+        tf_client_cfg.put("ftc_storage_timeout", 300.0)
         
-        while not yarp.Network.connect(remote_name, local_name):
-            print(f"Waiting for {remote_name} port to connect...")
-            time.sleep(0.1)
+        # Only set remote server if specified and reachable
+        if hasattr(self.cfg, 'tf_remote') and self.cfg.tf_remote:
+            # Check if the frameTransformServer is reachable
+            server_port = f"{self.cfg.tf_remote}/rpc:i"
+            if yarp.Network.exists(server_port):
+                tf_client_cfg.put("ft_server_prefix", self.cfg.tf_remote)
+                print(f"Connecting to frameTransformServer at {self.cfg.tf_remote}")
+            else:
+                print(f"Warning: frameTransformServer not found at {self.cfg.tf_remote}")
+                # Try without remote server (local mode)
+                print("Attempting to connect in local mode...")
+        
+        tf_client_cfg.put("local_rpc", f"/metaquest_{self.session_id}/tf/local_rpc")
+        
+        print(f"frameTransformClient configuration: {tf_client_cfg.toString()}")
+        
+        # Open transform client driver
+        self.tf_driver = yarp.PolyDriver(tf_client_cfg)
+        if not self.tf_driver.isValid():
+            # Provide more detailed error information
+            error_msg = f"Unable to open frameTransformClient. Possible issues:\n"
+            error_msg += f"1. frameTransformServer is not running (try: frameTransformServer --from ftServer.xml)\n"
+            error_msg += f"2. YARP ports are not accessible\n"
+            error_msg += f"3. Configuration file '{self.cfg.tf_file}' not found\n"
+            error_msg += f"Config used: {tf_client_cfg.toString()}"
+            raise DeviceNotConnectedError(error_msg)
+        
+        # Get IFrameTransform interface using the correct YARP method
+        self.tf_reader = self.tf_driver.viewIFrameTransform()
+        if not self.tf_reader:
+            raise DeviceNotConnectedError("Unable to view IFrameTransform interface")
             
         self._is_connected = True
+        print("Connected to iFrameTransform successfully")
 
     def disconnect(self):
-        """Close YARP connections and disconnect."""
-        if hasattr(self, 'port') and self.port:
-            self.port.close()
+        """Close frameTransform connections and disconnect."""
+        # Properly cleanup the interface to avoid memory leaks
+        if hasattr(self, 'tf_reader'):
+            self.tf_reader = None
+        
+        if self.tf_driver and self.tf_driver.isValid():
+            self.tf_driver.close()
+            
+        self.tf_driver = None
         yarp.Network.fini()
         self._is_connected = False
 
-    def _read_yarp_data(self):
-        """Read action data from YARP streams."""
-        if not self.port:
-            return [{"data": {}}]
+    def _get_transform(self, target_frame: str, reference_frame: str = "openxr_origin") -> np.ndarray:
+        """Get transformation matrix from iFrameTransform."""
+        if not self.tf_reader:
+            raise DeviceNotConnectedError("FrameTransform reader not available")
+        
+        # Use a try-except block to handle potential YARP errors gracefully
+        try:
+            success = self.tf_reader.getTransform(target_frame, reference_frame, self.matrix_buffer)
+            if not success:
+                print(f"Warning: Failed to get transform from {target_frame} to {reference_frame}")
+                return np.eye(4)  # Return identity matrix as fallback
+                
+            # Convert YARP matrix to numpy array
+            transform = np.zeros((4, 4))
+            for i in range(4):
+                for j in range(4):
+                    transform[i, j] = self.matrix_buffer.get(i, j)
             
-        # Use proper non-blocking read with waiting loop
-        read_attempts = 0
-        while (bottle := self.port.read(False)) is None:
-            read_attempts += 1
-            if read_attempts % 1000 == 0:
-                print(f"Still waiting for action data (attempt {read_attempts})")
-            time.sleep(0.001)  # Small sleep to avoid busy waiting
+            return transform
+            
+        except Exception as e:
+            print(f"Error getting transform from {target_frame} to {reference_frame}: {e}")
+            return np.eye(4)  # Return identity matrix as fallback
+
+    def _get_head_pose(self) -> dict:
+        """Get raw head pose from MetaQuest."""
+        transform = self._get_transform("openxr_head")
         
-        # Parse bottle data using structured approach
-        data = self._parse_bottle(bottle)
+        # Extract position and rotation from 4x4 transformation matrix
+        position = transform[:3, 3]
+        rotation_matrix = transform[:3, :3]
         
-        # Return data in a format similar to polars DataFrame
-        return [{"data": data}]
-    
-    def _parse_bottle(self, bottle):
-        """Parse YARP bottle into structured data using the same approach as ActionInterface."""
-        # Define format for parsing - similar to ActionInterface
-        format_map = {
-            'neck': ['float'] * 9,  # Adjust based on actual neck data size
-            'left_arm': ['float'] * 7,
-            'right_arm': ['float'] * 7,
-            'fingers': ['float'] * 12 # 10 fingers, 3 values each
-        }
-        
-        data = {}
-        
-        # Parse each control board using bottle.find() like the working interface
-        for board_name in self.cfg.control_boards:
-            if board_name in format_map:
-                board_bottle = bottle.find(board_name)
-                if not board_bottle.isNull():
-                    parsed_data = self._parse_bottle_recursive(board_bottle, format_map[board_name])
-                    if parsed_data is not None:
-                        if board_name == "fingers":
-                            # Convert list of lists to numpy array for fingers
-                            data[board_name] = np.array(parsed_data)
-                        else:
-                            # Convert list to numpy array for other boards
-                            data[board_name] = np.array(parsed_data)
-        
-        return data
-    
-    def _parse_bottle_recursive(self, bottle, format_spec):
-        """Recursive bottle parsing like ActionInterface.parse_bottle."""
-        if isinstance(format_spec, list):
-            if bottle.asList().size() == 0:
-                return None
-            result = []
-            bottle_list = bottle.asList()
-            for i in range(len(format_spec)):
-                if i < bottle_list.size():
-                    parsed_value = self._parse_bottle_recursive(bottle_list.get(i), format_spec[i])
-                    if parsed_value is None:
-                        return None
-                    result.append(parsed_value)
-                else:
-                    return None
-            return result
-        elif isinstance(format_spec, str):
-            if format_spec == 'float':
-                return bottle.asFloat64()
-            elif format_spec == 'int':
-                return bottle.asInt()
-            elif format_spec == 'string':
-                return bottle.asString()
-            else:
-                raise ValueError(f"Unsupported format: {format_spec}")
+        # Convert rotation matrix to quaternion (x, y, z, w)
+        # Using Shepperd's method for numerical stability
+        trace = np.trace(rotation_matrix)
+        if trace > 0:
+            s = np.sqrt(trace + 1.0) * 2  # s = 4 * qw
+            qw = 0.25 * s
+            qx = (rotation_matrix[2, 1] - rotation_matrix[1, 2]) / s
+            qy = (rotation_matrix[0, 2] - rotation_matrix[2, 0]) / s
+            qz = (rotation_matrix[1, 0] - rotation_matrix[0, 1]) / s
         else:
-            raise ValueError(f"Unsupported format: {format_spec}")
+            if rotation_matrix[0, 0] > rotation_matrix[1, 1] and rotation_matrix[0, 0] > rotation_matrix[2, 2]:
+                s = np.sqrt(1.0 + rotation_matrix[0, 0] - rotation_matrix[1, 1] - rotation_matrix[2, 2]) * 2
+                qw = (rotation_matrix[2, 1] - rotation_matrix[1, 2]) / s
+                qx = 0.25 * s
+                qy = (rotation_matrix[0, 1] + rotation_matrix[1, 0]) / s
+                qz = (rotation_matrix[0, 2] + rotation_matrix[2, 0]) / s
+            elif rotation_matrix[1, 1] > rotation_matrix[2, 2]:
+                s = np.sqrt(1.0 + rotation_matrix[1, 1] - rotation_matrix[0, 0] - rotation_matrix[2, 2]) * 2
+                qw = (rotation_matrix[0, 2] - rotation_matrix[2, 0]) / s
+                qx = (rotation_matrix[0, 1] + rotation_matrix[1, 0]) / s
+                qy = 0.25 * s
+                qz = (rotation_matrix[1, 2] + rotation_matrix[2, 1]) / s
+            else:
+                s = np.sqrt(1.0 + rotation_matrix[2, 2] - rotation_matrix[0, 0] - rotation_matrix[1, 1]) * 2
+                qw = (rotation_matrix[1, 0] - rotation_matrix[0, 1]) / s
+                qx = (rotation_matrix[0, 2] + rotation_matrix[2, 0]) / s
+                qy = (rotation_matrix[1, 2] + rotation_matrix[2, 1]) / s
+                qz = 0.25 * s
+        
+        return {
+            "position": {"x": float(position[0]), "y": float(position[1]), "z": float(position[2])},
+            "orientation": {"qx": float(qx), "qy": float(qy), "qz": float(qz), "qw": float(qw)}
+        }
+
+    def _get_hand_pose(self, side: str) -> dict:
+        """Get raw hand pose from MetaQuest."""
+        frame_name = f"openxr_{side}_hand"
+        transform = self._get_transform(frame_name)
+        
+        # Extract position and rotation from 4x4 transformation matrix
+        position = transform[:3, 3]
+        rotation_matrix = transform[:3, :3]
+        
+        # Convert rotation matrix to quaternion (x, y, z, w)
+        trace = np.trace(rotation_matrix)
+        if trace > 0:
+            s = np.sqrt(trace + 1.0) * 2  # s = 4 * qw
+            qw = 0.25 * s
+            qx = (rotation_matrix[2, 1] - rotation_matrix[1, 2]) / s
+            qy = (rotation_matrix[0, 2] - rotation_matrix[2, 0]) / s
+            qz = (rotation_matrix[1, 0] - rotation_matrix[0, 1]) / s
+        else:
+            if rotation_matrix[0, 0] > rotation_matrix[1, 1] and rotation_matrix[0, 0] > rotation_matrix[2, 2]:
+                s = np.sqrt(1.0 + rotation_matrix[0, 0] - rotation_matrix[1, 1] - rotation_matrix[2, 2]) * 2
+                qw = (rotation_matrix[2, 1] - rotation_matrix[1, 2]) / s
+                qx = 0.25 * s
+                qy = (rotation_matrix[0, 1] + rotation_matrix[1, 0]) / s
+                qz = (rotation_matrix[0, 2] + rotation_matrix[2, 0]) / s
+            elif rotation_matrix[1, 1] > rotation_matrix[2, 2]:
+                s = np.sqrt(1.0 + rotation_matrix[1, 1] - rotation_matrix[0, 0] - rotation_matrix[2, 2]) * 2
+                qw = (rotation_matrix[0, 2] - rotation_matrix[2, 0]) / s
+                qx = (rotation_matrix[0, 1] + rotation_matrix[1, 0]) / s
+                qy = 0.25 * s
+                qz = (rotation_matrix[1, 2] + rotation_matrix[2, 1]) / s
+            else:
+                s = np.sqrt(1.0 + rotation_matrix[2, 2] - rotation_matrix[0, 0] - rotation_matrix[1, 1]) * 2
+                qw = (rotation_matrix[1, 0] - rotation_matrix[0, 1]) / s
+                qx = (rotation_matrix[0, 2] + rotation_matrix[2, 0]) / s
+                qy = (rotation_matrix[1, 2] + rotation_matrix[2, 1]) / s
+                qz = 0.25 * s
+        
+        return {
+            "position": {"x": float(position[0]), "y": float(position[1]), "z": float(position[2])},
+            "orientation": {"qx": float(qx), "qy": float(qy), "qz": float(qz), "qw": float(qw)}
+        }
+
+    def _get_finger_poses(self, side: str) -> dict:
+        """Get raw finger poses from MetaQuest relative to hand frame."""
+        finger_poses = {}
+        
+        hand_frame = f"openxr_{side}_hand_finger_0"  # Reference frame (hand)
+        
+        for finger_name, finger_index in self.finger_index_pairs:
+            finger_frame = f"openxr_{side}_hand_finger_{finger_index}"
+            transform = self._get_transform(finger_frame, hand_frame)
+            
+            # Extract position from transformation matrix
+            position = transform[:3, 3]
+            
+            # Clean up finger name (remove _tip suffix for consistency)
+            clean_name = finger_name.replace("_tip", "")
+            
+            finger_poses[clean_name] = {
+                "x": float(position[0]),
+                "y": float(position[1]), 
+                "z": float(position[2])
+            }
+        
+        return finger_poses
 
     def get_action(self) -> dict[str, Any]:
         """
-        Get action from MetaQuest teleoperator in ergoCub-compatible format.
-        Returns flattened dictionary matching ergoCub.action_features.
+        Get raw MetaQuest poses without any coordinate system transformations.
+        Returns the raw poses from the MetaQuest in the openxr_origin frame.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        for data_row in self._read_yarp_data():
+        try:
+            # Get head pose
+            head_pose = self._get_head_pose()
+            
+            # Get hand poses
+            left_hand_pose = self._get_hand_pose("left")
+            right_hand_pose = self._get_hand_pose("right")
+            
+            # Get finger poses
+            left_finger_poses = self._get_finger_poses("left")
+            right_finger_poses = self._get_finger_poses("right")
+            
+            # Build flattened action dictionary that matches action_features
             action = {}
-            board_data = data_row["data"]
             
-            # Process each control board
-            for board_name in self.cfg.control_boards:
-                if board_name in board_data:
-                    data = board_data[board_name]
-                    
-                    if board_name == "neck":
-                        # Map neck data to quaternion format (4 values: qx, qy, qz, qw)
-                        if len(data) >= 4:
-                            action["neck.qx"] = float(data[0])
-                            action["neck.qy"] = float(data[1]) 
-                            action["neck.qz"] = float(data[2])
-                            action["neck.qw"] = float(data[3])
-                        else:
-                            # Fill missing values with defaults
-                            action["neck.qx"] = float(data[0]) if len(data) > 0 else 0.0
-                            action["neck.qy"] = float(data[1]) if len(data) > 1 else 0.0
-                            action["neck.qz"] = float(data[2]) if len(data) > 2 else 0.0
-                            action["neck.qw"] = 1.0  # Default quaternion w
-                    
-                    elif board_name in ["left_arm", "right_arm"]:
-                        # Map arm data to position + quaternion format (7 values: x,y,z,qx,qy,qz,qw)
-                        if len(data) >= 7:
-                            action[f"{board_name}.x"] = float(data[0])
-                            action[f"{board_name}.y"] = float(data[1])
-                            action[f"{board_name}.z"] = float(data[2])
-                            action[f"{board_name}.qx"] = float(data[3])
-                            action[f"{board_name}.qy"] = float(data[4])
-                            action[f"{board_name}.qz"] = float(data[5])
-                            action[f"{board_name}.qw"] = float(data[6])
-                        else:
-                            # Fill missing values with defaults
-                            for i, suffix in enumerate(["x", "y", "z", "qx", "qy", "qz", "qw"]):
-                                if i < len(data):
-                                    action[f"{board_name}.{suffix}"] = float(data[i])
-                                elif suffix == "qw":
-                                    action[f"{board_name}.{suffix}"] = 1.0  # Default quaternion w
-                                else:
-                                    action[f"{board_name}.{suffix}"] = 0.0
-                    
-                    elif board_name == "fingers":
-                        # Map finger data to nested finger format (10 fingers × 3 values each)
-                        # Assuming data is a 10x3 matrix or flattened 30-element array
-                        finger_names = ["thumb", "index", "middle", "ring", "little"]
-                        sides = ["left", "right"]
-                        
-                        if isinstance(data, np.ndarray) and data.shape == (10, 3):
-                            # Handle 10x3 matrix format
-                            finger_idx = 0
-                            for side in sides:
-                                for finger_name in finger_names:
-                                    if finger_idx < data.shape[0]:
-                                        action[f"fingers.{side}.{finger_name}.x"] = float(data[finger_idx, 0])
-                                        action[f"fingers.{side}.{finger_name}.y"] = float(data[finger_idx, 1])
-                                        action[f"fingers.{side}.{finger_name}.z"] = float(data[finger_idx, 2])
-                                        finger_idx += 1
-                                    else:
-                                        # Fill missing fingers with zeros
-                                        action[f"fingers.{side}.{finger_name}.x"] = 0.0
-                                        action[f"fingers.{side}.{finger_name}.y"] = 0.0
-                                        action[f"fingers.{side}.{finger_name}.z"] = 0.0
-                        elif isinstance(data, (list, np.ndarray)) and len(data) >= 30:
-                            # Handle flattened 30-element array
-                            finger_idx = 0
-                            for side in sides:
-                                for finger_name in finger_names:
-                                    base_idx = finger_idx * 3
-                                    if base_idx + 2 < len(data):
-                                        action[f"fingers.{side}.{finger_name}.x"] = float(data[base_idx])
-                                        action[f"fingers.{side}.{finger_name}.y"] = float(data[base_idx + 1])
-                                        action[f"fingers.{side}.{finger_name}.z"] = float(data[base_idx + 2])
-                                    else:
-                                        action[f"fingers.{side}.{finger_name}.x"] = 0.0
-                                        action[f"fingers.{side}.{finger_name}.y"] = 0.0
-                                        action[f"fingers.{side}.{finger_name}.z"] = 0.0
-                                    finger_idx += 1
-                        else:
-                            # Fill all fingers with zeros if data format is unexpected
-                            for side in sides:
-                                for finger_name in finger_names:
-                                    action[f"fingers.{side}.{finger_name}.x"] = 0.0
-                                    action[f"fingers.{side}.{finger_name}.y"] = 0.0
-                                    action[f"fingers.{side}.{finger_name}.z"] = 0.0
+            # Head pose
+            action["head.position.x"] = head_pose["position"]["x"]
+            action["head.position.y"] = head_pose["position"]["y"] 
+            action["head.position.z"] = head_pose["position"]["z"]
+            action["head.orientation.qx"] = head_pose["orientation"]["qx"]
+            action["head.orientation.qy"] = head_pose["orientation"]["qy"]
+            action["head.orientation.qz"] = head_pose["orientation"]["qz"]
+            action["head.orientation.qw"] = head_pose["orientation"]["qw"]
             
-            return action
+            # Left hand pose
+            action["left_hand.position.x"] = left_hand_pose["position"]["x"]
+            action["left_hand.position.y"] = left_hand_pose["position"]["y"]
+            action["left_hand.position.z"] = left_hand_pose["position"]["z"]
+            action["left_hand.orientation.qx"] = left_hand_pose["orientation"]["qx"]
+            action["left_hand.orientation.qy"] = left_hand_pose["orientation"]["qy"]
+            action["left_hand.orientation.qz"] = left_hand_pose["orientation"]["qz"]
+            action["left_hand.orientation.qw"] = left_hand_pose["orientation"]["qw"]
+            
+            # Right hand pose
+            action["right_hand.position.x"] = right_hand_pose["position"]["x"]
+            action["right_hand.position.y"] = right_hand_pose["position"]["y"]
+            action["right_hand.position.z"] = right_hand_pose["position"]["z"]
+            action["right_hand.orientation.qx"] = right_hand_pose["orientation"]["qx"]
+            action["right_hand.orientation.qy"] = right_hand_pose["orientation"]["qy"]
+            action["right_hand.orientation.qz"] = right_hand_pose["orientation"]["qz"]
+            action["right_hand.orientation.qw"] = right_hand_pose["orientation"]["qw"]
+            
+            # Left finger poses
+            for finger_name in ["thumb", "index", "middle", "ring", "pinky"]:
+                if finger_name in left_finger_poses:
+                    action[f"left_fingers.{finger_name}.x"] = left_finger_poses[finger_name]["x"]
+                    action[f"left_fingers.{finger_name}.y"] = left_finger_poses[finger_name]["y"]
+                    action[f"left_fingers.{finger_name}.z"] = left_finger_poses[finger_name]["z"]
+                else:
+                    action[f"left_fingers.{finger_name}.x"] = 0.0
+                    action[f"left_fingers.{finger_name}.y"] = 0.0
+                    action[f"left_fingers.{finger_name}.z"] = 0.0
+            
+            # Right finger poses
+            for finger_name in ["thumb", "index", "middle", "ring", "pinky"]:
+                if finger_name in right_finger_poses:
+                    action[f"right_fingers.{finger_name}.x"] = right_finger_poses[finger_name]["x"]
+                    action[f"right_fingers.{finger_name}.y"] = right_finger_poses[finger_name]["y"]
+                    action[f"right_fingers.{finger_name}.z"] = right_finger_poses[finger_name]["z"]
+                else:
+                    action[f"right_fingers.{finger_name}.x"] = 0.0
+                    action[f"right_fingers.{finger_name}.y"] = 0.0
+                    action[f"right_fingers.{finger_name}.z"] = 0.0
+                
+        except Exception as e:
+            print(f"Error getting MetaQuest data: {e}")
+            # Return default action if there's an error
+            action = self._get_default_flattened_action()
         
-        # Return empty action dict with default values if no data
-        return {key: 1.0 if key.endswith('.qw') else 0.0 for key in self.action_features.keys()}
+        return action
+
+    def _get_default_flattened_action(self) -> dict[str, Any]:
+        """Return a default flattened action structure with safe values."""
+        action = {}
+        
+        # Default head pose (identity orientation)
+        action["head.position.x"] = 0.0
+        action["head.position.y"] = 0.0
+        action["head.position.z"] = 0.0
+        action["head.orientation.qx"] = 0.0
+        action["head.orientation.qy"] = 0.0
+        action["head.orientation.qz"] = 0.0
+        action["head.orientation.qw"] = 1.0
+        
+        # Default hand poses (identity orientations)
+        for side in ["left_hand", "right_hand"]:
+            action[f"{side}.position.x"] = 0.0
+            action[f"{side}.position.y"] = 0.0
+            action[f"{side}.position.z"] = 0.0
+            action[f"{side}.orientation.qx"] = 0.0
+            action[f"{side}.orientation.qy"] = 0.0
+            action[f"{side}.orientation.qz"] = 0.0
+            action[f"{side}.orientation.qw"] = 1.0
+        
+        # Default finger poses (zero positions)
+        for side in ["left_fingers", "right_fingers"]:
+            for finger_name in ["thumb", "index", "middle", "ring", "pinky"]:
+                action[f"{side}.{finger_name}.x"] = 0.0
+                action[f"{side}.{finger_name}.y"] = 0.0
+                action[f"{side}.{finger_name}.z"] = 0.0
+        
+        return action
 
     @property
     def action_features(self):
         """
-        Return action features matching ergoCub format for compatibility.
-        Uses flattened dot-notation keys to match ergoCub.action_features.
+        Return action features for raw MetaQuest poses (no transformations).
+        Provides head, hand positions/orientations, and finger positions.
         """
-        # Define nested structure that mirrors ergoCub action hierarchy
-        nested_actions = {
-            "neck": {
-                "qx": float, "qy": float, "qz": float, "qw": float,
-            },
-            "left_arm": {
-                "x": float, "y": float, "z": float,
-                "qx": float, "qy": float, "qz": float, "qw": float,
-            },
-            "right_arm": {
-                "x": float, "y": float, "z": float,
-                "qx": float, "qy": float, "qz": float, "qw": float,
-            },
-            "fingers": {
-                "left": {
-                    "thumb": {"x": float, "y": float, "z": float},
-                    "index": {"x": float, "y": float, "z": float},
-                    "middle": {"x": float, "y": float, "z": float},
-                    "ring": {"x": float, "y": float, "z": float},
-                    "little": {"x": float, "y": float, "z": float},
-                },
-                "right": {
-                    "thumb": {"x": float, "y": float, "z": float},
-                    "index": {"x": float, "y": float, "z": float},
-                    "middle": {"x": float, "y": float, "z": float},
-                    "ring": {"x": float, "y": float, "z": float},
-                    "little": {"x": float, "y": float, "z": float},
-                },
-            },
+        return {
+            # Head pose
+            "head.position.x": float,
+            "head.position.y": float, 
+            "head.position.z": float,
+            "head.orientation.qx": float,
+            "head.orientation.qy": float,
+            "head.orientation.qz": float,
+            "head.orientation.qw": float,
+            
+            # Left hand pose
+            "left_hand.position.x": float,
+            "left_hand.position.y": float,
+            "left_hand.position.z": float,
+            "left_hand.orientation.qx": float,
+            "left_hand.orientation.qy": float,
+            "left_hand.orientation.qz": float,
+            "left_hand.orientation.qw": float,
+            
+            # Right hand pose
+            "right_hand.position.x": float,
+            "right_hand.position.y": float,
+            "right_hand.position.z": float,
+            "right_hand.orientation.qx": float,
+            "right_hand.orientation.qy": float,
+            "right_hand.orientation.qz": float,
+            "right_hand.orientation.qw": float,
+            
+            # Left finger positions (relative to left hand)
+            "left_fingers.thumb.x": float,
+            "left_fingers.thumb.y": float,
+            "left_fingers.thumb.z": float,
+            "left_fingers.index.x": float,
+            "left_fingers.index.y": float,
+            "left_fingers.index.z": float,
+            "left_fingers.middle.x": float,
+            "left_fingers.middle.y": float,
+            "left_fingers.middle.z": float,
+            "left_fingers.ring.x": float,
+            "left_fingers.ring.y": float,
+            "left_fingers.ring.z": float,
+            "left_fingers.pinky.x": float,
+            "left_fingers.pinky.y": float,
+            "left_fingers.pinky.z": float,
+            
+            # Right finger positions (relative to right hand)
+            "right_fingers.thumb.x": float,
+            "right_fingers.thumb.y": float,
+            "right_fingers.thumb.z": float,
+            "right_fingers.index.x": float,
+            "right_fingers.index.y": float,
+            "right_fingers.index.z": float,
+            "right_fingers.middle.x": float,
+            "right_fingers.middle.y": float,
+            "right_fingers.middle.z": float,
+            "right_fingers.ring.x": float,
+            "right_fingers.ring.y": float,
+            "right_fingers.ring.z": float,
+            "right_fingers.pinky.x": float,
+            "right_fingers.pinky.y": float,
+            "right_fingers.pinky.z": float,
         }
-        
-        return self._flatten_nested_dict(nested_actions)
-    
-    def _flatten_nested_dict(self, nested_dict: dict, prefix: str = "") -> dict[str, type]:
-        """Flatten a nested dictionary into dot-separated keys."""
-        flattened = {}
-        for key, value in nested_dict.items():
-            new_key = f"{prefix}.{key}" if prefix else key
-            if isinstance(value, dict):
-                flattened.update(self._flatten_nested_dict(value, new_key))
-            else:
-                flattened[new_key] = value
-        return flattened
 
     @property
     def feedback_features(self) -> dict:
