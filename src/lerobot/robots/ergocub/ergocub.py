@@ -188,6 +188,13 @@ class ErgoCub(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
         
+        # Check for invalid action values (NaN, all zeros, etc.) like metaControllClient
+        if not self._is_valid_action(action):
+            logger.debug("Action blocked: invalid or zero values detected")
+            # Return the current action without executing it
+            current_positions = self.bus.sync_read("Present_Position")
+            return current_positions
+        
         # Safety check: only move if hand positions are close to current positions
         if not self.check_hand_position_safety(action):
             logger.debug("Action blocked: hand positions not within safety tolerance")
@@ -356,14 +363,21 @@ class ErgoCub(Robot):
             arms_to_check.append("right")
             
         for side in arms_to_check:
+            # Check if target position is valid (not all zeros, like metaControllClient)
+            target_pos = np.array([
+                action.get(f"{side}_arm.x", 0.0),
+                action.get(f"{side}_arm.y", 0.0),
+                action.get(f"{side}_arm.z", 0.0)
+            ])
+            
+            # Check for invalid poses (all zeros or NaN values, similar to metaControllClient)
+            if np.allclose(target_pos, 0.0, atol=1e-6) or np.any(np.isnan(target_pos)):
+                logger.debug("Invalid target position for %s arm: all zeros or NaN values", side)
+                return False
+            
             if not self.is_arm_controlled[side]:
                 # Get current and target positions
                 current_pos = self.get_current_hand_position(side)
-                target_pos = np.array([
-                    action.get(f"{side}_arm.x", 0.0),
-                    action.get(f"{side}_arm.y", 0.0),
-                    action.get(f"{side}_arm.z", 0.0)
-                ])
                 
                 # Calculate position error
                 position_error = target_pos - current_pos
@@ -398,6 +412,43 @@ class ErgoCub(Robot):
         """
         self.position_tolerance = max(0.01, tolerance)  # Minimum 1cm tolerance
         logger.info("Position tolerance set to %.3fm", self.position_tolerance)
+
+    def _is_valid_action(self, action: dict[str, Any]) -> bool:
+        """
+        Check if the action contains valid values (not all zeros, no NaN values).
+        Based on the isValidPose function from metaControllClient.
+        
+        Args:
+            action (dict[str, Any]): Action to validate
+            
+        Returns:
+            bool: True if action is valid, False otherwise
+        """
+        # Check for NaN values
+        for key, value in action.items():
+            if isinstance(value, (int, float)) and np.isnan(value):
+                logger.debug("NaN value detected in action key: %s", key)
+                return False
+        
+        # Check if position values are all zeros for each configured arm
+        arms_to_check = []
+        if self.config.use_left_arm:
+            arms_to_check.append("left")
+        if self.config.use_right_arm:
+            arms_to_check.append("right")
+            
+        for side in arms_to_check:
+            # Check arm position values
+            arm_position_keys = [f"{side}_arm.x", f"{side}_arm.y", f"{side}_arm.z"]
+            arm_position_values = [action.get(key, 0.0) for key in arm_position_keys]
+            
+            # Sum of absolute values (like metaControllClient isValidPose)
+            position_sum = sum(abs(v) for v in arm_position_values)
+            if position_sum <= 1e-6:
+                logger.debug("Invalid action: %s arm position values are all zeros", side)
+                return False
+        
+        return True
 
     @property
     def _motors_ft(self) -> dict[str, type]:
