@@ -42,6 +42,10 @@ class ErgoCub(Robot):
         self.session_id = uuid.uuid4()
         self._is_connected = False
 
+        # Safety control variables for hand position checking
+        self.is_arm_controlled = {"left": False, "right": False}
+        self.position_tolerance = 0.1  # 10 cm tolerance like in metaControllClient (0.2 was 20cm)
+
         # Set YARP robot name for resource finding
         import os
         os.environ["YARP_ROBOT_NAME"] = "ergoCubSN002"
@@ -113,12 +117,15 @@ class ErgoCub(Robot):
             logger.info("ErgoCub doesn't require calibration - skipping.")
             
         self.configure()
-        logger.info(f"{self} connected.")
+        logger.info("%s connected.", self)
 
     def disconnect(self):
         """Disconnect from the robot and perform any necessary cleanup."""
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
+            
+        # Reset arm control state for safety
+        self.reset_arm_control()
             
         # Disconnect cameras
         for cam in self.cameras.values():
@@ -128,7 +135,7 @@ class ErgoCub(Robot):
         self.bus.disconnect()
         self._is_connected = False
         
-        logger.info(f"{self} disconnected.")
+        logger.info("%s disconnected.", self)
 
     def get_observation(self) -> dict[str, Any]:
         """
@@ -180,6 +187,13 @@ class ErgoCub(Robot):
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
+        
+        # Safety check: only move if hand positions are close to current positions
+        if not self.check_hand_position_safety(action):
+            logger.debug("Action blocked: hand positions not within safety tolerance")
+            # Return the current action without executing it
+            current_positions = self.bus.sync_read("Present_Position")
+            return current_positions
             
         # Validate action format matches expected action_features
         expected_keys = set(self.action_features.keys())
@@ -190,9 +204,9 @@ class ErgoCub(Robot):
         extra_keys = received_keys - expected_keys
         
         if missing_keys:
-            logger.warning(f"Missing action keys: {missing_keys}")
+            logger.warning("Missing action keys: %s", missing_keys)
         if extra_keys:
-            logger.warning(f"Extra action keys: {extra_keys}")
+            logger.warning("Extra action keys: %s", extra_keys)
         
         # Convert to dict if it's an array for compatibility
         if isinstance(action, np.ndarray):
@@ -223,7 +237,7 @@ class ErgoCub(Robot):
                         validated_action[key] = max(-1.0, min(1.0, validated_action[key]))
                         
                 except (ValueError, TypeError) as e:
-                    logger.warning(f"Invalid value for {key}: {action[key]} ({e}). Using default.")
+                    logger.warning("Invalid value for %s: %s (%s). Using default.", key, action[key], e)
                     validated_action[key] = 1.0 if key.endswith('.qw') else 0.0
             else:
                 # Use default values for missing keys
@@ -266,7 +280,8 @@ class ErgoCub(Robot):
         
         # Log the action for debugging (first few keys only)
         sample_keys = list(validated_action.keys())[:5]
-        logger.debug(f"Sending action (sample): {{{', '.join(f'{k}: {validated_action[k]:.3f}' for k in sample_keys)}, ...}}")
+        sample_action = {k: f"{validated_action[k]:.3f}" for k in sample_keys}
+        logger.debug("Sending action (sample): %s, ...", sample_action)
         
         return validated_action
 
@@ -288,11 +303,101 @@ class ErgoCub(Robot):
 
     def calibrate(self) -> None:
         """ErgoCub doesn't require calibration - no-op."""
-        pass
 
     def configure(self) -> None:
         """Apply any one-time configuration - no-op for ErgoCub."""
-        pass
+
+    def get_current_hand_position(self, side: str) -> np.ndarray:
+        """
+        Get the current position of the specified hand from the robot's sensors.
+        
+        Args:
+            side (str): "left" or "right"
+            
+        Returns:
+            np.ndarray: Current hand position [x, y, z] in meters
+        """
+        try:
+            # Read current motor positions
+            current_positions = self.bus.sync_read("Present_Position")
+            
+            # Extract position for the specified arm
+            arm_key = f"{side}_arm"
+            if arm_key in current_positions:
+                # Return position components [x, y, z]
+                return np.array([
+                    current_positions.get(f"{arm_key}.x", 0.0),
+                    current_positions.get(f"{arm_key}.y", 0.0), 
+                    current_positions.get(f"{arm_key}.z", 0.0)
+                ])
+            else:
+                logger.warning("No position data available for %s arm", side)
+                return np.zeros(3)
+                
+        except (RuntimeError, AttributeError) as e:
+            logger.warning("Failed to get current position for %s arm: %s", side, e)
+            return np.zeros(3)
+
+    def check_hand_position_safety(self, action: dict[str, Any]) -> bool:
+        """
+        Check if the target hand positions are close enough to current positions to safely move.
+        Based on the safety logic from metaControllClient.
+        
+        Args:
+            action (dict[str, Any]): Target action containing hand positions
+            
+        Returns:
+            bool: True if it's safe to move (both hands within tolerance or controlled)
+        """
+        arms_to_check = []
+        if self.config.use_left_arm:
+            arms_to_check.append("left")
+        if self.config.use_right_arm:
+            arms_to_check.append("right")
+            
+        for side in arms_to_check:
+            if not self.is_arm_controlled[side]:
+                # Get current and target positions
+                current_pos = self.get_current_hand_position(side)
+                target_pos = np.array([
+                    action.get(f"{side}_arm.x", 0.0),
+                    action.get(f"{side}_arm.y", 0.0),
+                    action.get(f"{side}_arm.z", 0.0)
+                ])
+                
+                # Calculate position error
+                position_error = target_pos - current_pos
+                max_error = np.max(np.abs(position_error))
+                
+                if max_error < self.position_tolerance:
+                    self.is_arm_controlled[side] = True
+                    logger.info("%s arm is now controlled (error: %.3fm < %.3fm)", 
+                              side.capitalize(), max_error, self.position_tolerance)
+                else:
+                    logger.debug("%s arm not ready: position error %.3fm > %.3fm", 
+                               side.capitalize(), max_error, self.position_tolerance)
+            
+        # Only move if all configured arms are controlled
+        controlled_arms = [side for side in arms_to_check if self.is_arm_controlled[side]]
+        return len(controlled_arms) == len(arms_to_check)
+
+    def reset_arm_control(self) -> None:
+        """
+        Reset the arm control state, requiring position check before movement.
+        Similar to the reset functionality in metaControllClient.
+        """
+        self.is_arm_controlled = {"left": False, "right": False}
+        logger.info("Arm control reset: hands must be repositioned within tolerance before movement")
+
+    def set_position_tolerance(self, tolerance: float) -> None:
+        """
+        Set the position tolerance for safety checking.
+        
+        Args:
+            tolerance (float): Position tolerance in meters (default 0.1m = 10cm)
+        """
+        self.position_tolerance = max(0.01, tolerance)  # Minimum 1cm tolerance
+        logger.info("Position tolerance set to %.3fm", self.position_tolerance)
 
     @property
     def _motors_ft(self) -> dict[str, type]:
