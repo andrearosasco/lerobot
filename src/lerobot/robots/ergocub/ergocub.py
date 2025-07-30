@@ -23,7 +23,8 @@ import numpy as np
 import yarp
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.motors.yarp import YarpEncodersBus
+from lerobot.motors import Motor, MotorNormMode
+from lerobot.motors.ergocub import ErgoCubMotorsBus
 from lerobot.robots.robot import Robot
 
 from .configuration_ergocub import ErgoCubConfig
@@ -57,12 +58,36 @@ class ErgoCub(Robot):
                 other_cameras = make_cameras_from_configs({cam_name: cam_config})
                 self.cameras.update(other_cameras)
 
-        # Encoders bus (non-camera data)
-        self.encoders_bus = YarpEncodersBus(
+        # Create motors configuration for compatibility with MotorsBus interface
+        motors = {}
+        
+        # Define motors for left arm (pose + fingers)
+        if config.use_left_arm:
+            motors.update({
+                "left_arm": Motor(1, "ergocub_arm", MotorNormMode.RANGE_M100_100),
+                "left_fingers": Motor(2, "ergocub_fingers", MotorNormMode.RANGE_M100_100),
+            })
+        
+        # Define motors for right arm (pose + fingers)
+        if config.use_right_arm:
+            motors.update({
+                "right_arm": Motor(3, "ergocub_arm", MotorNormMode.RANGE_M100_100),
+                "right_fingers": Motor(4, "ergocub_fingers", MotorNormMode.RANGE_M100_100),
+            })
+        
+        # Define motor for neck
+        if config.use_neck:
+            motors["neck"] = Motor(5, "ergocub_neck", MotorNormMode.RANGE_M100_100)
+
+        # Initialize the new ErgoCub motors bus
+        self.bus = ErgoCubMotorsBus(
             remote_prefix=config.remote_prefix,
             local_prefix=f"{config.local_prefix}/{self.session_id}",
-            control_boards=config.encoders_control_boards,
-            stream_name="encoders",
+            motors=motors,
+            calibration=None,  # No calibration needed for ErgoCub
+            use_left_arm=config.use_left_arm,
+            use_right_arm=config.use_right_arm,
+            use_neck=config.use_neck,
         )
 
     def connect(self, calibrate: bool = True):
@@ -76,8 +101,8 @@ class ErgoCub(Robot):
         for cam in self.cameras.values():
             cam.connect()
         
-        # Connect encoders bus
-        self.encoders_bus.connect()
+        # Connect motor bus (arm and neck controllers)
+        self.bus.connect()
         self._is_connected = True
         
         if not self.is_calibrated and calibrate:
@@ -95,9 +120,8 @@ class ErgoCub(Robot):
         for cam in self.cameras.values():
             cam.disconnect()
         
-        # Disconnect encoders
-        self.encoders_bus.disconnect()
-        yarp.Network.fini()
+        # Disconnect motor bus
+        self.bus.disconnect()
         self._is_connected = False
         
         logger.info(f"{self} disconnected.")
@@ -125,35 +149,9 @@ class ErgoCub(Robot):
             if "depth" in cam_data:
                 obs[f"{cam_name}_depth"] = cam_data["depth"]
         
-        # Read encoder data and format like SO101 motor data
-        encoder_data = self.encoders_bus.sync_read("Present_Position")
-        
-        # Define joint names mapping (same as in _encoders_ft)
-        board_joints_map = {
-            "head": ["neck_pitch", "neck_roll", "neck_yaw", "eyes_tilt"],
-            "left_arm": [
-                "l_shoulder_pitch", "l_shoulder_roll", "l_shoulder_yaw", "l_elbow",
-                "l_wrist_prosup", "l_wrist_pitch", "l_wrist_yaw", "l_thumb_oppose",
-                "l_thumb_proximal", "l_thumb_distal", "l_index_proximal", "l_index_distal",
-                "l_middle_proximal"
-            ],
-            "right_arm": [
-                "r_shoulder_pitch", "r_shoulder_roll", "r_shoulder_yaw", "r_elbow",
-                "r_wrist_prosup", "r_wrist_pitch", "r_wrist_yaw", "r_thumb_oppose",
-                "r_thumb_proximal", "r_thumb_distal", "r_index_proximal", "r_index_distal",
-                "r_middle_proximal"
-            ],
-            "torso": ["torso_pitch", "torso_roll", "torso_yaw"],
-            "left_leg": ["l_hip_pitch", "l_hip_roll", "l_hip_yaw", "l_knee", "l_ankle_pitch", "l_ankle_roll"],
-            "right_leg": ["r_hip_pitch", "r_hip_roll", "r_hip_yaw", "r_knee", "r_ankle_pitch", "r_ankle_roll"],
-        }
-        
-        for board_name, joint_positions in encoder_data.items():
-            if board_name in board_joints_map:
-                joint_names = board_joints_map[board_name]
-                for i, joint_value in enumerate(joint_positions):
-                    if i < len(joint_names):  # Safety check
-                        obs[f"{joint_names[i]}.pos"] = joint_value
+        # Read motor data (poses and finger positions) using new motor bus
+        motor_data = self.bus.sync_read("Present_Position")
+        obs.update(motor_data)
         
         return obs
 
@@ -162,12 +160,13 @@ class ErgoCub(Robot):
         Send an action command to the robot.
 
         Args:
-            action (dict[str, Any]): Dictionary representing the desired pose action.
-                Expected format matches action_features:
-                - neck.{qx,qy,qz,qw}: neck orientation (quaternion)
+            action (dict[str, Any]): Dictionary representing the desired action.
+                Expected format for new motor system:
                 - left_arm.{x,y,z,qx,qy,qz,qw}: left arm position + orientation
                 - right_arm.{x,y,z,qx,qy,qz,qw}: right arm position + orientation
-                - fingers.{left|right}.{thumb|index|middle|ring|little}.{x,y,z}: finger positions
+                - left_fingers.{thumb_add,thumb_oc,index_add,index_oc,middle_oc,ring_pinky_oc}: left hand joints
+                - right_fingers.{thumb_add,thumb_oc,index_add,index_oc,middle_oc,ring_pinky_oc}: right hand joints
+                - neck.{qx,qy,qz,qw}: neck orientation
 
         Returns:
             dict[str, Any]: The action actually sent to the robot system.
@@ -193,7 +192,6 @@ class ErgoCub(Robot):
         
         # Convert to dict if it's an array for compatibility
         if isinstance(action, np.ndarray):
-            # Map array elements to expected action structure
             action_dict = {}
             idx = 0
             
@@ -228,7 +226,15 @@ class ErgoCub(Robot):
                 validated_action[key] = 1.0 if key.endswith('.qw') else 0.0
         
         # Normalize quaternions to ensure they are valid
-        for prefix in ['neck', 'left_arm', 'right_arm']:
+        quaternion_prefixes = []
+        if self.config.use_neck:
+            quaternion_prefixes.append('neck')
+        if self.config.use_left_arm:
+            quaternion_prefixes.append('left_arm')
+        if self.config.use_right_arm:
+            quaternion_prefixes.append('right_arm')
+            
+        for prefix in quaternion_prefixes:
             qx_key = f"{prefix}.qx"
             qy_key = f"{prefix}.qy" 
             qz_key = f"{prefix}.qz"
@@ -251,13 +257,12 @@ class ErgoCub(Robot):
                     validated_action[qz_key] = 0.0
                     validated_action[qw_key] = 1.0
         
+        # Send commands via motor bus
+        self.bus.sync_write("Goal_Position", validated_action)
+        
         # Log the action for debugging (first few keys only)
         sample_keys = list(validated_action.keys())[:5]
         logger.debug(f"Sending action (sample): {{{', '.join(f'{k}: {validated_action[k]:.3f}' for k in sample_keys)}, ...}}")
-        
-        # Here you would typically send the action to the actual robot hardware
-        # For now, we just return the validated action as the "sent" action
-        # TODO: Implement actual robot communication (e.g., YARP, ROS, etc.)
         
         return validated_action
 
@@ -267,10 +272,10 @@ class ErgoCub(Robot):
         # Check if cameras are connected
         cameras_connected = all(cam.is_connected for cam in self.cameras.values()) if self.cameras else True
         
-        # Check if encoders bus is connected
-        encoders_connected = self.encoders_bus.is_connected
+        # Check if motor bus is connected
+        motors_connected = self.bus.is_connected
         
-        return self._is_connected and cameras_connected and encoders_connected
+        return self._is_connected and cameras_connected and motors_connected
 
     @property
     def is_calibrated(self) -> bool:
@@ -286,34 +291,34 @@ class ErgoCub(Robot):
         pass
 
     @property
-    def _encoders_ft(self) -> dict[str, type]:
-        """Helper property to get encoder features in SO101 format."""
-        # Define joints per control board (similar to motors in SO101)
-        board_joints_map = {
-            "head": ["neck_pitch", "neck_roll", "neck_yaw", "eyes_tilt"],
-            "left_arm": [
-                "l_shoulder_pitch", "l_shoulder_roll", "l_shoulder_yaw", "l_elbow",
-                "l_wrist_prosup", "l_wrist_pitch", "l_wrist_yaw", "l_thumb_oppose",
-                "l_thumb_proximal", "l_thumb_distal", "l_index_proximal", "l_index_distal",
-                "l_middle_proximal"
-            ],
-            "right_arm": [
-                "r_shoulder_pitch", "r_shoulder_roll", "r_shoulder_yaw", "r_elbow",
-                "r_wrist_prosup", "r_wrist_pitch", "r_wrist_yaw", "r_thumb_oppose",
-                "r_thumb_proximal", "r_thumb_distal", "r_index_proximal", "r_index_distal",
-                "r_middle_proximal"
-            ],
-            "torso": ["torso_pitch", "torso_roll", "torso_yaw"],
-            "left_leg": ["l_hip_pitch", "l_hip_roll", "l_hip_yaw", "l_knee", "l_ankle_pitch", "l_ankle_roll"],
-            "right_leg": ["r_hip_pitch", "r_hip_roll", "r_hip_yaw", "r_knee", "r_ankle_pitch", "r_ankle_roll"],
-        }
+    def _motors_ft(self) -> dict[str, type]:
+        """Helper property to get motor features in SO100 format."""
+        motors_ft = {}
         
-        encoders_ft = {}
-        for board_name in self.config.encoders_control_boards:
-            if board_name in board_joints_map:
-                for joint_name in board_joints_map[board_name]:
-                    encoders_ft[f"{joint_name}.pos"] = float
-        return encoders_ft
+        # Left arm pose (7 DOF)
+        if self.config.use_left_arm:
+            for coord in ["x", "y", "z", "qx", "qy", "qz", "qw"]:
+                motors_ft[f"left_arm.{coord}"] = float
+            
+            # Left fingers (6 DOF)
+            for joint in ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]:
+                motors_ft[f"left_fingers.{joint}"] = float
+        
+        # Right arm pose (7 DOF)
+        if self.config.use_right_arm:
+            for coord in ["x", "y", "z", "qx", "qy", "qz", "qw"]:
+                motors_ft[f"right_arm.{coord}"] = float
+            
+            # Right fingers (6 DOF)
+            for joint in ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]:
+                motors_ft[f"right_fingers.{joint}"] = float
+        
+        # Neck orientation (4 DOF)
+        if self.config.use_neck:
+            for coord in ["qx", "qy", "qz", "qw"]:
+                motors_ft[f"neck.{coord}"] = float
+        
+        return motors_ft
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -331,60 +336,14 @@ class ErgoCub(Robot):
         A dictionary describing the structure and types of the observations produced by the robot.
         Values are either float for single values or tuples for array shapes.
         """
-        return {**self._encoders_ft, **self._cameras_ft}
+        return {**self._motors_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
         """
         A dictionary describing the structure and types of the actions expected by the robot.
-        ErgoCub actions are pose commands (position + orientation) from the teleoperator.
+        ErgoCub actions are pose commands (position + orientation) for arms and neck, plus finger positions.
         
-        Uses Pattern 1 format: {str: type} for compatibility with LeRobot ecosystem.
-        Action format with descriptive names:
-        - neck: 4 values (quaternion)
-        - left_arm/right_arm: 7 values each (3 position + 4 quaternion) 
-        - fingers: 10 fingers × 3 values each (x, y, z positions)
+        Returns action features in SO100-like format with dot notation.
         """
-        # Define nested structure that mirrors the action hierarchy
-        nested_actions = {
-            "neck": {
-                "qx": float, "qy": float, "qz": float, "qw": float,
-            },
-            "left_arm": {
-                "x": float, "y": float, "z": float,
-                "qx": float, "qy": float, "qz": float, "qw": float,
-            },
-            "right_arm": {
-                "x": float, "y": float, "z": float,
-                "qx": float, "qy": float, "qz": float, "qw": float,
-            },
-            "fingers": {
-                "left": {
-                    "thumb": {"x": float, "y": float, "z": float},
-                    "index": {"x": float, "y": float, "z": float},
-                    "middle": {"x": float, "y": float, "z": float},
-                    "ring": {"x": float, "y": float, "z": float},
-                    "little": {"x": float, "y": float, "z": float},
-                },
-                "right": {
-                    "thumb": {"x": float, "y": float, "z": float},
-                    "index": {"x": float, "y": float, "z": float},
-                    "middle": {"x": float, "y": float, "z": float},
-                    "ring": {"x": float, "y": float, "z": float},
-                    "little": {"x": float, "y": float, "z": float},
-                },
-            },
-        }
-        
-        return self._flatten_nested_dict(nested_actions)
-    
-    def _flatten_nested_dict(self, nested_dict: dict, prefix: str = "") -> dict[str, type]:
-        """Flatten a nested dictionary into dot-separated keys."""
-        flattened = {}
-        for key, value in nested_dict.items():
-            new_key = f"{prefix}.{key}" if prefix else key
-            if isinstance(value, dict):
-                flattened.update(self._flatten_nested_dict(value, new_key))
-            else:
-                flattened[new_key] = value
-        return flattened
+        return self._motors_ft  # Actions and observations have the same structure
