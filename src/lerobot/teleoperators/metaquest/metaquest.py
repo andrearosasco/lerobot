@@ -94,7 +94,7 @@ class MetaQuest(Teleoperator):
             'neck': ['float'] * 9,  # Adjust based on actual neck data size
             'left_arm': ['float'] * 7,
             'right_arm': ['float'] * 7,
-            'fingers': [['float'] * 3] * 10  # 10 fingers, 3 values each
+            'fingers': ['float'] * 12 # 10 fingers, 3 values each
         }
         
         data = {}

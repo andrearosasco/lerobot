@@ -50,7 +50,6 @@ class ErgoCub(Robot):
                 from lerobot.cameras.yarp import YarpCamera
                 self.cameras[cam_name] = YarpCamera(
                     cam_config, 
-                    config.remote_prefix, 
                     f"{config.local_prefix}/{self.session_id}"
                 )
             else:

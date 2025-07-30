@@ -63,7 +63,7 @@ class CameraInterface:
             
             while not yarp.Network.connect(rgb_remote_name, rgb_local_name, "mjpeg"):
                 print(f"Waiting for RGB port {rgb_remote_name} to connect...")
-                time.sleep(0.1)
+                time.sleep(1.0)
             
         # Create and open depth port if needed
         if self.depth_shape:
@@ -145,16 +145,16 @@ class YarpCamera(Camera):
     in the standard LeRobot camera interface format.
     """
 
-    def __init__(self, config: YarpCameraConfig, remote_prefix: str, local_prefix: str):
+    def __init__(self, config: YarpCameraConfig, local_prefix: str):
         super().__init__(config)
         self.config = config
-        self.remote_prefix = remote_prefix
+
         self.local_prefix = local_prefix
         self._is_connected = False
         
         # Create YARP camera interface
         self.interface = CameraInterface(
-            remote_prefix=remote_prefix,
+            remote_prefix=config.remote_prefix,
             local_prefix=local_prefix,
             rgb_shape=(config.width, config.height) if config.use_depth or True else None,
             depth_shape=(config.width, config.height) if config.use_depth else None,

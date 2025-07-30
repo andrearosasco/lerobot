@@ -43,6 +43,7 @@ class YarpCameraConfig(CameraConfig):
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
         rotation: Image rotation setting. Defaults to no rotation.
         warmup_s: Time reading frames before returning from connect (in seconds)
+        remote_prefix: Remote port prefix for YARP connections. Defaults to empty string.
 
     Note:
         - The yarp_name corresponds to the camera stream name in YARP
@@ -55,6 +56,7 @@ class YarpCameraConfig(CameraConfig):
     color_mode: ColorMode = ColorMode.RGB
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
+    remote_prefix: str = ""
 
     def __post_init__(self):
         if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):

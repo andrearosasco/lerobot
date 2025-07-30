@@ -92,19 +92,16 @@ class YarpEncodersBus:
                 logger.error(f"Failed to open local port {local_name}")
                 continue
                 
-            # Connect to remote port
-            if yarp.Network.connect(remote_name, local_name, 'tcp'):
-                logger.debug(f"Connected {remote_name} -> {local_name}")
-                success_count += 1
-            else:
-                logger.warning(f"Failed to connect {remote_name} -> {local_name}")
+            # Connect to remote port with retry logic
+            while not yarp.Network.connect(remote_name, local_name, 'tcp'):
+                logger.warning(f"Failed to connect {remote_name} -> {local_name}, retrying in 1 second...")
+                time.sleep(1)
+            
+            logger.debug(f"Connected {remote_name} -> {local_name}")
+            success_count += 1
         
-        if success_count == len(self.control_boards):
-            self._is_connected = True
-            logger.info(f"Successfully connected to all {len(self.control_boards)} encoder streams")
-        else:
-            logger.warning(f"Connected to {success_count}/{len(self.control_boards)} encoder streams")
-            self._is_connected = True  # Allow partial connections
+        self._is_connected = True
+        logger.info(f"Successfully connected to all {len(self.control_boards)} encoder streams")
 
     def disconnect(self) -> None:
         """
@@ -119,7 +116,7 @@ class YarpEncodersBus:
         logger.info("Disconnecting YARP encoders")
         
         for board, port in self.ports.items():
-            if port.isOpen():
+            if not port.isClosed():
                 port.close()
                 logger.debug(f"Closed port for {board}")
         
