@@ -42,6 +42,10 @@ class ErgoCub(Robot):
         self.session_id = uuid.uuid4()
         self._is_connected = False
 
+        # Set YARP robot name for resource finding
+        import os
+        os.environ["YARP_ROBOT_NAME"] = "ergoCubSN002"
+
         yarp.Network.init()
 
         # Use custom camera creation for YARP cameras with prefixes

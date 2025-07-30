@@ -24,6 +24,7 @@ import yarp
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.motors_bus import MotorsBus
+from lerobot.model.kinematics import RobotKinematics
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ class ErgoCubArmController:
         self._is_connected = False
         
         # YARP ports for sending commands
-        self.arm_cmd_port = yarp.Port()
+        self.arm_cmd_port = yarp.RpcClient()
         self.fingers_cmd_port = yarp.Port()
         
         # Encoder reading for pose computation (will use direct kinematics later)
@@ -68,13 +69,13 @@ class ErgoCubArmController:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"ErgoCubArmController({self.arm_name}) already connected")
         
-        # Open command port for arm pose commands
-        arm_cmd_local = f"{self.local_prefix}/{self.arm_name}_arm/cmd:o"
+        # Open RPC port for arm pose commands
+        arm_cmd_local = f"{self.local_prefix}/{self.arm_name}_arm/rpc:o"
         if not self.arm_cmd_port.open(arm_cmd_local):
-            raise ConnectionError(f"Failed to open arm command port {arm_cmd_local}")
+            raise ConnectionError(f"Failed to open arm RPC port {arm_cmd_local}")
         
-        # Connect to MetaControllServer arm command port
-        arm_cmd_remote = f"/metaControllServer/{self.arm_name}_arm/cmd:i"
+        # Connect directly to cartesian controller RPC port
+        arm_cmd_remote = f"/mc-ergocub-cartesian-controller/{self.arm_name}_arm/rpc:i"
         while not yarp.Network.connect(arm_cmd_local, arm_cmd_remote):
             logger.warning(f"Failed to connect {arm_cmd_local} -> {arm_cmd_remote}, retrying...")
             time.sleep(1)
@@ -117,7 +118,7 @@ class ErgoCubArmController:
         bottle = self.encoders_port.read(False)
         if bottle is not None:
             # Extract joint values
-            joint_values = np.array([bottle.get(i).asFloat64() for i in range(bottle.size())])
+            joint_values = np.array([bottle.get(i) for i in range(bottle.size())])
             
             # TODO: Implement direct kinematics to compute pose from joint angles
             # For now, use cached values or placeholder
@@ -156,12 +157,15 @@ class ErgoCubArmController:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"ErgoCubArmController({self.arm_name}) not connected")
         
-        # Send arm pose command
+        # Send arm pose command to cartesian controller (same format as MetaControllServer)
         arm_cmd = yarp.Bottle()
+        arm_cmd.addString("go_to_pose")
         for val in pose:
-            arm_cmd.addFloat32(float(val))
+            arm_cmd.addFloat64(float(val))
+        arm_cmd.addFloat64(0.0)  # time duration
         
-        self.arm_cmd_port.write(arm_cmd)
+        reply = yarp.Bottle()
+        self.arm_cmd_port.write(arm_cmd, reply)
         
         # Update cached pose
         self._current_pose = pose.copy()
@@ -173,18 +177,24 @@ class ErgoCubArmController:
         
         Args:
             joint_values: Joint encoder values
-            
-        TODO: Implement actual direct kinematics computation
         """
-        # Placeholder: For now, just update finger values from known indices
-        # In ergoCub, hand joints are typically at the end of the arm joint list
+
+        # Import kinematics function
+        from .kinematics import compute_arm_pose_from_joints
+        
+        # Extract arm joint values (first 7 joints typically)
+        arm_joints = joint_values[:7] if len(joint_values) >= 7 else joint_values
+        
+        # Compute end-effector pose using direct kinematics
+        position, quaternion = compute_arm_pose_from_joints(arm_joints, self.arm_name)
+        
+        # Combine position and quaternion into a single array [x, y, z, qx, qy, qz, qw]
+        self._current_pose = np.concatenate([position, quaternion])
+        
+        # Extract finger joint values if available
         if len(joint_values) >= 13:  # 7 arm joints + 6 hand joints
-            # Extract finger joint values (adjust indices based on actual robot configuration)
             finger_start_idx = 7  # Assuming first 7 are arm joints
             self._current_fingers = joint_values[finger_start_idx:finger_start_idx+6]
-        
-        # TODO: Compute end-effector pose from arm joint values
-        # self._current_pose = compute_direct_kinematics(joint_values[:7])
 
 
 class ErgoCubNeckController:
@@ -206,7 +216,7 @@ class ErgoCubNeckController:
         self._is_connected = False
         
         # YARP ports
-        self.neck_cmd_port = yarp.Port()
+        self.neck_cmd_port = yarp.RpcClient()
         self.encoders_port = yarp.BufferedPortVector()
         
         # Current state cache
@@ -221,13 +231,13 @@ class ErgoCubNeckController:
         if self.is_connected:
             raise DeviceAlreadyConnectedError("ErgoCubNeckController already connected")
         
-        # Open command port for neck orientation commands
-        neck_cmd_local = f"{self.local_prefix}/neck/cmd:o"
+        # Open RPC port for neck orientation commands
+        neck_cmd_local = f"{self.local_prefix}/neck/rpc:o"
         if not self.neck_cmd_port.open(neck_cmd_local):
-            raise ConnectionError(f"Failed to open neck command port {neck_cmd_local}")
+            raise ConnectionError(f"Failed to open neck RPC port {neck_cmd_local}")
         
-        # Connect to MetaControllServer neck command port
-        neck_cmd_remote = "/metaControllServer/neck/cmd:i"
+        # Connect directly to head controller RPC port
+        neck_cmd_remote = "/mc-ergocub-head-controller/rpc:i"
         while not yarp.Network.connect(neck_cmd_local, neck_cmd_remote):
             logger.warning(f"Failed to connect {neck_cmd_local} -> {neck_cmd_remote}, retrying...")
             time.sleep(1)
@@ -270,7 +280,7 @@ class ErgoCubNeckController:
         bottle = self.encoders_port.read(False)
         if bottle is not None:
             # Extract neck joint values and compute orientation
-            joint_values = np.array([bottle.get(i).asFloat64() for i in range(min(4, bottle.size()))])
+            joint_values = np.array([bottle.get(i) for i in range(min(4, bottle.size()))])
             self._update_orientation_from_encoders(joint_values)
         
         # Return state in SO100-like format
@@ -302,13 +312,19 @@ class ErgoCubNeckController:
             [2*(qx*qz - qy*qw), 2*(qy*qz + qx*qw), 1 - 2*(qx*qx + qy*qy)]
         ])
         
-        # Send as 9-element vector (row-major order)
+        # Send RPC command to head controller
         neck_cmd = yarp.Bottle()
-        for i in range(3):
-            for j in range(3):
-                neck_cmd.addFloat64(rot_matrix[i, j])
+        neck_cmd.addString("setOrientation")
         
-        self.neck_cmd_port.write(neck_cmd)
+        # Add rotation matrix as nested bottle
+        rot_bottle = neck_cmd.addList()
+        for i in range(3):
+            row_bottle = rot_bottle.addList()
+            for j in range(3):
+                row_bottle.addFloat64(rot_matrix[i, j])
+        
+        reply = yarp.Bottle()
+        self.neck_cmd_port.write(neck_cmd, reply)
         
         # Update cached orientation
         self._current_orientation = orientation.copy()
@@ -319,12 +335,12 @@ class ErgoCubNeckController:
         
         Args:
             joint_values: Neck joint encoder values
-            
-        TODO: Implement actual neck kinematics computation
         """
-        # Placeholder: For now, assume simple mapping from joint angles to quaternion
-        # TODO: Implement proper neck kinematics
-        pass
+        # Import kinematics function
+        from .kinematics import compute_neck_quaternion_from_joints
+        
+        # Compute neck orientation as quaternion [qx, qy, qz, qw]
+        self._current_orientation = compute_neck_quaternion_from_joints(joint_values[:3])
 
 
 class ErgoCubMotorsBus(MotorsBus):
@@ -332,6 +348,39 @@ class ErgoCubMotorsBus(MotorsBus):
     ErgoCub motors bus that manages arm and neck controllers.
     Follows SO100 MotorsBus conventions but operates at pose level.
     """
+    
+    # Required class attributes for MotorsBus compatibility
+    apply_drive_mode = False
+    available_baudrates = [1000000]  # Dummy value - not used for YARP
+    default_baudrate = 1000000  # Dummy value - not used for YARP
+    default_timeout = 1000  # Dummy value - not used for YARP
+    model_baudrate_table = {}  # Empty - not used for YARP
+    model_ctrl_table = {
+        "ergocub_arm": {
+            "Present_Position": (0, 4),  # Dummy address and bytes
+            "Goal_Position": (4, 4),
+        },
+        "ergocub_fingers": {
+            "Present_Position": (0, 4),
+            "Goal_Position": (4, 4),
+        },
+        "ergocub_neck": {
+            "Present_Position": (0, 4),
+            "Goal_Position": (4, 4),
+        },
+    }
+    model_encoding_table = {}  # Empty - not used for YARP
+    model_number_table = {
+        "ergocub_arm": 1000,  # Dummy model numbers
+        "ergocub_fingers": 1001,
+        "ergocub_neck": 1002,
+    }
+    model_resolution_table = {
+        "ergocub_arm": 4096,  # Dummy resolution values
+        "ergocub_fingers": 4096,
+        "ergocub_neck": 4096,
+    }
+    normalized_data = []  # Empty - not used for YARP
     
     def __init__(
         self,
@@ -382,11 +431,6 @@ class ErgoCubMotorsBus(MotorsBus):
     def is_connected(self) -> bool:
         """Check if all enabled controllers are connected."""
         return all(controller.is_connected for controller in self.controllers.values())
-    
-    @property
-    def is_calibrated(self) -> bool:
-        """ErgoCub doesn't require calibration."""
-        return True
     
     def connect(self) -> None:
         """Connect all controllers."""
@@ -523,3 +567,50 @@ class ErgoCubMotorsBus(MotorsBus):
     def torque_disabled(self, motors=None):
         """Context manager for temporarily disabling torque (no-op for ErgoCub)."""
         yield
+    
+    # Abstract methods required by MotorsBus (implemented as no-ops for ErgoCub)
+    @property
+    def is_calibrated(self) -> bool:
+        """ErgoCub doesn't require traditional motor calibration."""
+        return True
+    
+    def _assert_protocol_is_compatible(self, instruction_name: str) -> None:
+        """No protocol compatibility issues for ErgoCub YARP interface."""
+        pass
+    
+    def _disable_torque(self, motor_id: int, model: str, num_retry: int = 0) -> None:
+        """Not applicable for ErgoCub - no individual motor torque control."""
+        pass
+    
+    def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
+        """Not applicable for ErgoCub - motors are accessed via YARP controllers."""
+        return (0, 0)  # Return dummy values
+    
+    def _handshake(self) -> None:
+        """Verify connection to ErgoCub controllers."""
+        # Check all controllers are connected
+        for name, controller in self.controllers.items():
+            if not controller.is_connected:
+                raise ConnectionError(f"ErgoCub {name} controller not connected")
+    
+    def _split_into_byte_chunks(self, value: int, length: int) -> list[int]:
+        """Not used for ErgoCub YARP interface."""
+        return []
+    
+    def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
+        """Not applicable for ErgoCub - uses YARP instead of serial communication."""
+        return {}
+    
+    def configure_motors(self) -> None:
+        """Configure ErgoCub controllers (if needed)."""
+        # ErgoCub controllers are configured via YARP configuration files
+        # No additional configuration needed here
+        pass
+    
+    def read_calibration(self) -> dict[str, MotorCalibration]:
+        """ErgoCub doesn't use traditional motor calibration."""
+        return {}
+    
+    def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
+        """ErgoCub doesn't use traditional motor calibration."""
+        pass
