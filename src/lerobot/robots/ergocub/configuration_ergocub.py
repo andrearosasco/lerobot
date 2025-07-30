@@ -31,7 +31,11 @@ class ErgoCubConfig(RobotConfig):
     local_prefix: str = "/ergocub_dashboard"
     # Configuration for cameras (using standard LeRobot camera interface)
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
-    # List of control boards for encoders
+    # Enable/disable specific body parts
+    use_left_arm: bool = True
+    use_right_arm: bool = True
+    use_neck: bool = True
+    # Legacy field for backward compatibility (not used with new motor bus)
     encoders_control_boards: List[str] = field(
         default_factory=lambda: ["head", "left_arm", "right_arm", "torso"]
     )
