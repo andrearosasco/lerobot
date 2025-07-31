@@ -1,8 +1,8 @@
 python -m lerobot.record \
    --robot.type=ergocub \
-   --robot.remote_prefix="/ergocubSim" \
+   --robot.remote_prefix="/ergocub" \
    --robot.local_prefix="/lerobot" \
-   --robot.cameras='{ agentview: {"type": "yarp", "yarp_name": "depthCamera", "remote_prefix": "/ergocubSim", "width": 1280, "height": 720, "fps": 30} }' \
+   --robot.cameras='{ agentview: {"type": "yarp", "yarp_name": "depthCamera", "width": 1280, "height": 720, "fps": 30} }' \
    --robot.encoders_control_boards='[head,left_arm,right_arm,torso]' \
    --teleop.type=metaquest \
    --teleop.control_boards='[neck,left_arm,right_arm,fingers]' \

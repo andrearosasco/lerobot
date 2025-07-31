@@ -1,0 +1,235 @@
+<robot name="ergocub_hand_right">
+    <!--  palm  -->
+    <link name="r_eef_link"/>
+    <joint name="r_eef_fixed_joint" type="fixed">
+        <parent link="r_eef_link"/>
+        <child link="r_palm_base"/>
+        <origin xyz="0 0 0.06" rpy="0 0 3.141596"/>
+    </joint>
+    <link name="r_palm_base">
+        <visual>
+            <geometry>
+                <mesh filename="mesh/r_palm.stl"/>
+            </geometry>
+        </visual>
+    </link>
+
+    <!--  thumb  -->
+    <joint name="r_00thumb1" type="revolute">
+        <origin xyz="0.02337 0.003 -0.034524" rpy="0 -0.226892802651332 0"/>
+        <axis xyz="0 0 1"/>
+        <parent link="r_palm_base"/>
+        <child link="r_thumb1"/>
+        <limit lower="0" upper="1.7453292519943295" effort="4" velocity="4"/>
+    </joint>
+    <link name="r_thumb1">
+        <visual>
+            <geometry>
+                <mesh filename="mesh/r_thumb1.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="r_011thumb2" type="revolute">
+        <origin xyz="0.0380746544995605 0.003469109580325286 -0.0036017448035497446" rpy="-1.7697290685198344 -0.13749152761469902 -2.965379613992927"/>
+        <axis xyz="0 0 -1"/>
+        <parent link="r_thumb1"/>
+        <child link="r_thumb2"/>
+        <limit lower="0" upper="1.5707963267948966" effort="4" velocity="4"/>
+    </joint>
+    <link name="r_thumb2">
+        <visual>
+            <geometry>
+                <mesh filename="mesh/r_thumb2.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="r_012thumb3" type="revolute">
+        <origin xyz="-0.035 0.0015 0" rpy="0 0 3.1415926535883125"/>
+        <axis xyz="0 0 -1"/>
+        <parent link="r_thumb2"/>
+        <child link="r_thumb3"/>
+        <limit lower="0" upper="1.7697638615222502" effort="4" velocity="4"/>
+        <mimic joint="r_011thumb2" multiplier="0.5909373177810342" offset="0.08225276873947457"/>
+    </joint>
+    <link name="r_thumb3">
+        <visual>
+            <geometry>
+                <mesh filename="mesh/r_thumb3.stl"/>
+            </geometry>
+        </visual>
+    </link>
+
+    <!--  index  -->
+    <joint name="r_02index1" type="revolute">
+        <origin xyz="0.0225 0.0015 -0.0686" rpy="0 0.29670597283904 3.141592653589792"/>
+        <axis xyz="0 -1 0"/>
+        <parent link="r_palm_base"/>
+        <child link="r_index1"/>
+        <limit lower="0" upper="0.2617993877991494" effort="4" velocity="4"/>
+    </joint>
+    <link name="r_index1">
+        <visual>
+            <geometry>
+                <mesh filename="mesh/r_index1.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="r_031index2" type="revolute">
+        <origin xyz="-0.00919 0 -0.030713451316238316" rpy="0 0 0"/>
+        <axis xyz="-1 0 0"/>
+        <parent link="r_index1"/>
+        <child link="r_index2"/>
+        <limit lower="0" upper="1.5707963267948966" effort="4" velocity="4"/>
+    </joint>
+    <link name="r_index2">
+        <visual>
+            <geometry>
+                <mesh filename="mesh/r_index2.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="r_032index3" type="revolute">
+        <origin xyz="0 -0.0015 -0.04" rpy="0 0 0"/>
+        <axis xyz="-1 0 0"/>
+        <parent link="r_index2"/>
+        <child link="r_index3"/>
+        <limit lower="0" upper="1.7994344588061537" effort="4" velocity="4"/>
+        <mimic joint="r_031index2" multiplier="1.0362078387151505" offset="0.0752746251429467"/>
+    </joint>
+    <link name="r_index3">
+        <visual>
+            <geometry>
+                <mesh filename="mesh/r_index3.stl"/>
+            </geometry>
+        </visual>
+    </link>
+
+    <!--  middle  -->
+    <joint name="r_041middle1" type="revolute">
+        <origin xyz="0.0096 0.0015 -0.103" rpy="0 0 3.1415926535897927"/>
+        <axis xyz="-1 0 0"/>
+        <parent link="r_palm_base"/>
+        <child link="r_middle1"/>
+        <limit lower="0" upper="1.5707963267948966" effort="4" velocity="4"/>
+    </joint>
+    <link name="r_middle1">
+        <visual>
+            <geometry>
+                <mesh filename="mesh/r_middle1.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="r_042middle2" type="revolute">
+        <origin xyz="0 -0.0015 -0.04" rpy="0 0 0"/>
+        <axis xyz="-1 0 0"/>
+        <parent link="r_middle1"/>
+        <child link="r_middle2"/>
+        <limit lower="0" upper="1.7994344588061537" effort="4" velocity="4"/>
+        <mimic joint="r_041middle1" multiplier="1.0362078387151505" offset="0.0752746251429467"/>
+    </joint>
+    <link name="r_middle2">
+        <visual>
+            <geometry>
+                <mesh filename="mesh/r_middle2.stl"/>
+            </geometry>
+        </visual>
+    </link>
+
+    <!--  ring  -->
+    <joint name="r_051ring1" type="revolute">
+        <origin xyz="-0.015417755568684424 0.001849813728471178 -0.09788067183717986" rpy="0 -0.08726646270762471 3.11541271480963"/>
+        <axis xyz="-1 0 0"/>
+        <parent link="r_palm_base"/>
+        <child link="r_ring1"/>
+        <limit lower="0" upper="1.5707963267948966" effort="4" velocity="4"/>
+    </joint>
+    <link name="r_ring1">
+        <visual>
+            <geometry>
+                <mesh filename="mesh/r_ring1.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="r_052ring2" type="revolute">
+        <origin xyz="0 -0.0015 -0.04" rpy="-0 0 0"/>
+        <axis xyz="-1 0 0"/>
+        <parent link="r_ring1"/>
+        <child link="r_ring2"/>
+        <limit lower="0" upper="1.7994344588061537" effort="4" velocity="4"/>
+        <mimic joint="r_051ring1" multiplier="1.0362078387151505" offset="0.0752746251429467"/>
+    </joint>
+    <link name="r_ring2">
+        <visual>
+            <geometry>
+                <mesh filename="mesh/r_ring2.stl"/>
+            </geometry>
+        </visual>
+    </link>
+
+    <!--  pinkie  -->
+    <joint name="r_053pinkie1" type="revolute">
+        <origin xyz="-0.035982680943166166 0.002377759579109573 -0.09206828131946371" rpy="4.1095343980510334e-4 -0.08726646259972864 3.1154127148098776"/>
+        <axis xyz="-1 0 0"/>
+        <parent link="r_palm_base"/>
+        <child link="r_pinkie1"/>
+        <limit lower="0" upper="1.5707963267948966" effort="4" velocity="4"/>
+        <mimic joint="r_051ring1" multiplier="1" offset="0"/>
+    </joint>
+    <link name="r_pinkie1">
+        <visual>
+            <geometry>
+                <mesh filename="mesh/r_pinkie1.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="r_054pinkie2" type="revolute">
+        <origin xyz="0 -0.001514193309379297 -0.03499938883211873"  rpy="0 0 0"/>
+        <axis xyz="-1 0 0"/>
+        <parent link="r_pinkie1"/>
+        <child link="r_pinkie2"/>
+        <limit lower="0" upper="1.7226399717184033" effort="4" velocity="4"/>
+        <mimic joint="r_053pinkie1" multiplier="0.9857188196265708" offset="0.03005006249788421"/>
+    </joint>
+    <link name="r_pinkie2">
+        <visual>
+            <geometry>
+                <mesh filename="mesh/r_pinkie2.stl"/>
+            </geometry>
+        </visual>
+    </link>
+
+    <!--  anchor  -->
+    <link name="A_00"/>
+    <link name="A_01"/>
+    <link name="A_02"/>
+    <link name="A_03"/>
+    <link name="A_04"/>
+    <joint name="j_A_00" type="fixed">
+        <child link="A_00"/>
+        <parent link="r_thumb3"/>
+        <origin xyz="0.041 0.001 0" rpy="0 0 0"/>
+    </joint>
+    <joint name="j_A_01" type="fixed">
+        <child link="A_01"/>
+        <parent link="r_index3"/>
+        <origin xyz="0 -0.001 -0.045" rpy="0 0 0"/>
+    </joint>
+    <joint name="j_A_02" type="fixed">
+        <child link="A_02"/>
+        <parent link="r_middle2"/>
+        <origin xyz="0 -0.001 -0.045" rpy="0 0 0"/>
+    </joint>
+    <joint name="j_A_03" type="fixed">
+        <child link="A_03"/>
+        <parent link="r_ring2"/>
+        <origin xyz="0 -0.001 -0.044" rpy="0 0 0"/>
+    </joint>
+    <joint name="j_A_04" type="fixed">
+        <child link="A_04"/>
+        <parent link="r_pinkie2"/>
+        <origin xyz="0 -0.001 -0.044" rpy="0 0 0"/>
+    </joint>
+
+    <!--  klampt  -->
+    <klampt use_vis_geom="1" freeze_root_link="1"/>
+</robot>

@@ -30,6 +30,7 @@ from lerobot.robots.robot import Robot
 from .configuration_ergocub import ErgoCubConfig
 from .safety_utils import HandSafetyChecker
 from .metaquest_transforms import transform_metaquest_to_ergocub
+from .manipulator import Manipulator
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +51,16 @@ class ErgoCub(Robot):
         # Initialize safety checker
         self.safety_checker = HandSafetyChecker(position_tolerance=0.1)
         
-        # MetaQuest transforms enabled flag
-        self.use_metaquest_transforms = getattr(config, 'use_metaquest_transforms', False)
+        # Initialize finger kinematics using Manipulator class
+        self.finger_kinematics = {}
+        
+        if config.use_left_arm:
+            left_hand_urdf = "/usr/local/src/robot/lerobot/src/lerobot/robots/ergocub/ergocub_hand_left/model.urdf"
+            self.finger_kinematics["left"] = Manipulator(left_hand_urdf)
+        
+        if config.use_right_arm:
+            right_hand_urdf = "/usr/local/src/robot/lerobot/src/lerobot/robots/ergocub/ergocub_hand_right/model.urdf"
+            self.finger_kinematics["right"] = Manipulator(right_hand_urdf)
 
         yarp.Network.init()
 
@@ -151,6 +160,8 @@ class ErgoCub(Robot):
         
         # Apply MetaQuest coordinate transforms if enabled
         action = transform_metaquest_to_ergocub(action)
+        # Compute finger joint angles from finger tip positions
+        action = self.compute_finger_joints(action)
         
         # Basic safety checks
         arms_to_check = [side for side in ["left", "right"] 
@@ -166,6 +177,31 @@ class ErgoCub(Robot):
         
         # Send commands via motor bus
         self.bus.send_commands(action)
+        return action
+
+    def compute_finger_joints(self, action: dict[str, Any]) -> dict[str, Any]:
+        """Compute finger joint angles from MetaQuest finger tip positions using Manipulator."""
+        for side in ["left", "right"]:
+            if side not in self.finger_kinematics:
+                continue
+                
+            # Extract finger tip positions as list of [x,y,z] positions
+            finger_positions = []
+            for finger in ["thumb", "index", "middle", "ring", "pinky"]:
+                keys = [f"{side}_fingers.{finger}.{coord}" for coord in ["x", "y", "z"]]
+                if all(key in action for key in keys):
+                    finger_positions.append([action[key] for key in keys])
+            
+            if len(finger_positions) == 5:  # All 5 fingers
+                # Use Manipulator to solve IK for finger tip positions
+                self.finger_kinematics[side].inverse_kinematic(finger_positions)
+                # Get the computed joint angles
+                joint_angles = self.finger_kinematics[side].get_driver_value()
+                joint_names = ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]
+                for i, joint in enumerate(joint_names):
+                    if i < len(joint_angles):
+                        action[f"{side}_fingers.{joint}"] = joint_angles[i]
+        
         return action
 
     @property
