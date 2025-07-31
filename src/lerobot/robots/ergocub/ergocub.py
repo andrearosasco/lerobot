@@ -365,9 +365,9 @@ class ErgoCub(Robot):
         for side in arms_to_check:
             # Check if target position is valid (not all zeros, like metaControllClient)
             target_pos = np.array([
-                action.get(f"{side}_arm.x", 0.0),
-                action.get(f"{side}_arm.y", 0.0),
-                action.get(f"{side}_arm.z", 0.0)
+                action.get(f"{side}_hand.position.x", 0.0),
+                action.get(f"{side}_hand.position.y", 0.0),
+                action.get(f"{side}_hand.position.z", 0.0)
             ])
             
             # Check for invalid poses (all zeros or NaN values, similar to metaControllClient)
@@ -426,9 +426,10 @@ class ErgoCub(Robot):
         """
         # Check for NaN values
         for key, value in action.items():
-            if isinstance(value, (int, float)) and np.isnan(value):
+            if np.any(np.isnan(value)):
                 logger.debug("NaN value detected in action key: %s", key)
                 return False
+
         
         # Check if position values are all zeros for each configured arm
         arms_to_check = []
@@ -439,7 +440,7 @@ class ErgoCub(Robot):
             
         for side in arms_to_check:
             # Check arm position values
-            arm_position_keys = [f"{side}_arm.x", f"{side}_arm.y", f"{side}_arm.z"]
+            arm_position_keys = [f"{side}_hand.position.x", f"{side}_hand.position.y", f"{side}_hand.position.z"]
             arm_position_values = [action.get(key, 0.0) for key in arm_position_keys]
             
             # Sum of absolute values (like metaControllClient isValidPose)
