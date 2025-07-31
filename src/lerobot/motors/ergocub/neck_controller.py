@@ -51,10 +51,11 @@ class ErgoCubNeckController:
         # YARP ports
         self.neck_cmd_port = yarp.RpcClient()
         self.encoders_port = yarp.BufferedPortVector()
+        self.torso_encoders_port = yarp.BufferedPortVector()
         
-        # Initialize kinematics solver
+        # Initialize kinematics solver with torso + neck joints
         urdf_file = yarp.ResourceFinder().findFileByName("model.urdf")
-        joint_names = ["neck_pitch", "neck_roll", "neck_yaw"]
+        joint_names = ["torso_roll", "torso_pitch", "torso_yaw", "neck_pitch", "neck_roll", "neck_yaw"]
         self.kinematics_solver = RobotKinematics(urdf_file, "head", joint_names)
     
     @property
@@ -88,6 +89,17 @@ class ErgoCubNeckController:
             logger.warning(f"Failed to connect {encoders_remote} -> {encoders_local}, retrying...")
             time.sleep(1)
         
+        # Open torso encoder reading port for neck kinematics
+        torso_encoders_local = f"{self.local_prefix}/neck/torso_encoders:i"
+        if not self.torso_encoders_port.open(torso_encoders_local):
+            raise ConnectionError(f"Failed to open torso encoders port {torso_encoders_local}")
+        
+        # Connect to torso encoder stream
+        torso_encoders_remote = f"{self.remote_prefix}/torso/state:o"
+        while not yarp.Network.connect(torso_encoders_remote, torso_encoders_local):
+            logger.warning(f"Failed to connect {torso_encoders_remote} -> {torso_encoders_local}, retrying...")
+            time.sleep(1)
+        
         self._is_connected = True
         logger.info("ErgoCubNeckController connected")
     
@@ -98,6 +110,7 @@ class ErgoCubNeckController:
         
         self.neck_cmd_port.close()
         self.encoders_port.close()
+        self.torso_encoders_port.close()
         self._is_connected = False
         logger.info("ErgoCubNeckController disconnected")
     
@@ -111,24 +124,34 @@ class ErgoCubNeckController:
         if not self.is_connected:
             raise DeviceNotConnectedError("ErgoCubNeckController not connected")
         
-        # Read encoder data with busy wait and warnings
-        bottle = self.encoders_port.read(False)
-        last_warning_time = 0
+        # Read neck encoder data with attempt-based warnings
+        read_attempts = 0
+        while (bottle := self.encoders_port.read(False)) is None:
+            read_attempts += 1
+            if read_attempts % 1000 == 0:  # Warning every 1000 attempts
+                logger.warning(f"Still waiting for neck encoder data (attempt {read_attempts})")
+            time.sleep(0.001)  # 1 millisecond sleep
         
-        while bottle is None:
-            current_time = time.time()
-            if current_time - last_warning_time > 1.0:  # Warning every second
-                logger.warning("No encoder data received for neck")
-                last_warning_time = current_time
-            time.sleep(0.01)  # Small sleep to avoid excessive CPU usage
-            bottle = self.encoders_port.read(False)
+        # Read torso encoder data
+        read_attempts = 0
+        while (torso_bottle := self.torso_encoders_port.read(False)) is None:
+            read_attempts += 1
+            if read_attempts % 1000 == 0:  # Warning every 1000 attempts
+                logger.warning(f"Still waiting for torso encoder data (attempt {read_attempts})")
+            time.sleep(0.001)  # 1 millisecond sleep
         
-        # Extract joint values and compute orientation
-        joint_values = np.array([bottle.get(i) for i in range(bottle.size())])
-        T = self.kinematics_solver.forward_kinematics(joint_values[:3].tolist())
+        # Extract torso joint values (first 3 joints: pitch, roll, yaw)
+        torso_values = np.array([torso_bottle.get(i) for i in range(min(3, torso_bottle.size()))])
+        
+        # Extract neck joint values and compute orientation
+        neck_values = np.array([bottle.get(i) for i in range(bottle.size())])
+        
+        # Combine torso + neck joints for kinematics (6 joints total: 3 torso + 3 neck)
+        full_joint_values = np.concatenate([torso_values, neck_values[:3]])
+        T = self.kinematics_solver.forward_kinematics(full_joint_values.tolist())
         quaternion = R.from_matrix(T[:3, :3]).as_quat()  # [x, y, z, w]
         
-        return dict(zip(["neck.qx", "neck.qy", "neck.qz", "neck.qw"], quaternion))
+        return dict(zip(["neck.orientation.qx", "neck.orientation.qy", "neck.orientation.qz", "neck.orientation.qw"], quaternion))
     
     def send_command(self, orientation: np.ndarray) -> None:
         """
@@ -157,3 +180,22 @@ class ErgoCubNeckController:
         
         reply = yarp.Bottle()
         self.neck_cmd_port.write(neck_cmd, reply)
+
+    def send_commands(self, commands: dict[str, float]) -> None:
+        """Send commands from dict format."""
+        # Extract neck orientation if available
+        quat_keys = ["qx", "qy", "qz", "qw"]
+        if all(key in commands for key in quat_keys):
+            orientation = np.array([commands[key] for key in quat_keys])
+            self.send_command(orientation)
+
+    @property
+    def motor_features(self) -> dict[str, type]:
+        """Get motor features for neck controller."""
+        features = {}
+        
+        # Neck orientation (4 DOF)
+        for coord in ["qx", "qy", "qz", "qw"]:
+            features[f"neck.orientation.{coord}"] = float
+        
+        return features

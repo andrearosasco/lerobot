@@ -54,12 +54,13 @@ class ErgoCubArmController:
         self.arm_cmd_port = yarp.RpcClient()
         self.fingers_cmd_port = yarp.Port()
         
-        # Encoder reading for pose computation (will use direct kinematics later)
+        # Encoder reading for pose computation  
         self.encoders_port = yarp.BufferedPortVector()
+        self.torso_encoders_port = yarp.BufferedPortVector()
         
-        # Initialize kinematics solver
+        # Initialize kinematics solver with torso + arm joints
         urdf_file = yarp.ResourceFinder().findFileByName("model.urdf")
-        joint_names = [f"{self.arm_name[0]}_shoulder_pitch", f"{self.arm_name[0]}_shoulder_roll", f"{self.arm_name[0]}_shoulder_yaw", f"{self.arm_name[0]}_elbow", f"{self.arm_name[0]}_wrist_yaw", f"{self.arm_name[0]}_wrist_roll", f"{self.arm_name[0]}_wrist_pitch"]
+        joint_names = ["torso_roll", "torso_pitch", "torso_yaw"] + [f"{self.arm_name[0]}_shoulder_pitch", f"{self.arm_name[0]}_shoulder_roll", f"{self.arm_name[0]}_shoulder_yaw", f"{self.arm_name[0]}_elbow", f"{self.arm_name[0]}_wrist_yaw", f"{self.arm_name[0]}_wrist_roll", f"{self.arm_name[0]}_wrist_pitch"]
         self.kinematics_solver = RobotKinematics(urdf_file, f"{self.arm_name[0]}_hand_palm", joint_names)
         
     @property
@@ -93,6 +94,17 @@ class ErgoCubArmController:
             logger.warning(f"Failed to connect {encoders_remote} -> {encoders_local}, retrying...")
             time.sleep(1)
         
+        # Open torso encoder reading port
+        torso_encoders_local = f"{self.local_prefix}/{self.arm_name}_arm/torso_encoders:i"
+        if not self.torso_encoders_port.open(torso_encoders_local):
+            raise ConnectionError(f"Failed to open torso encoders port {torso_encoders_local}")
+        
+        # Connect to torso encoder stream
+        torso_encoders_remote = f"{self.remote_prefix}/torso/state:o"
+        while not yarp.Network.connect(torso_encoders_remote, torso_encoders_local):
+            logger.warning(f"Failed to connect {torso_encoders_remote} -> {torso_encoders_local}, retrying...")
+            time.sleep(1)
+        
         self._is_connected = True
         logger.info(f"ErgoCubArmController({self.arm_name}) connected")
     
@@ -103,6 +115,7 @@ class ErgoCubArmController:
         
         self.arm_cmd_port.close()
         self.encoders_port.close()
+        self.torso_encoders_port.close()
         self._is_connected = False
         logger.info(f"ErgoCubArmController({self.arm_name}) disconnected")
     
@@ -116,25 +129,35 @@ class ErgoCubArmController:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"ErgoCubArmController({self.arm_name}) not connected")
         
-        # Read encoder data with busy wait and warnings
-        bottle = self.encoders_port.read(False)
-        last_warning_time = 0
+        # Read arm encoder data with attempt-based warnings
+        read_attempts = 0
+        while (bottle := self.encoders_port.read(False)) is None:
+            read_attempts += 1
+            if read_attempts % 1000 == 0:  # Warning every 1000 attempts
+                logger.warning(f"Still waiting for {self.arm_name} arm encoder data (attempt {read_attempts})")
+            time.sleep(0.001)  # 1 millisecond sleep
         
-        while bottle is None:
-            current_time = time.time()
-            if current_time - last_warning_time > 1.0:  # Warning every second
-                logger.warning(f"No encoder data received for {self.arm_name} arm")
-                last_warning_time = current_time
-            time.sleep(0.01)  # Small sleep to avoid excessive CPU usage
-            bottle = self.encoders_port.read(False)
+        # Read torso encoder data
+        read_attempts = 0
+        while (torso_bottle := self.torso_encoders_port.read(False)) is None:
+            read_attempts += 1
+            if read_attempts % 1000 == 0:  # Warning every 1000 attempts
+                logger.warning(f"Still waiting for torso encoder data for {self.arm_name} arm (attempt {read_attempts})")
+            time.sleep(0.001)  # 1 millisecond sleep
         
-        # Extract joint values and compute pose
-        joint_values = np.array([bottle.get(i) for i in range(bottle.size())])
-        T = self.kinematics_solver.forward_kinematics(joint_values[:7].tolist())
+        # Extract torso joint values (first 3 joints: pitch, roll, yaw)
+        torso_values = np.array([torso_bottle.get(i) for i in range(min(3, torso_bottle.size()))])
+        
+        # Extract arm joint values and compute pose
+        arm_values = np.array([bottle.get(i) for i in range(bottle.size())])
+        
+        # Combine torso + arm joints for kinematics (10 joints total: 3 torso + 7 arm)
+        full_joint_values = np.concatenate([torso_values, arm_values[:7]])
+        T = self.kinematics_solver.forward_kinematics(full_joint_values.tolist())
         position = T[:3, 3]
         quaternion = R.from_matrix(T[:3, :3]).as_quat()  # [x, y, z, w]
         pose = np.concatenate([position, quaternion])
-        fingers = joint_values[7:13]
+        fingers = arm_values[7:13] if len(arm_values) >= 13 else np.zeros(6)
         
         # Return state in SO100-like format
         pose_keys = [f"{self.arm_name}_arm.{k}" for k in ["x", "y", "z", "qx", "qy", "qz", "qw"]]
@@ -162,3 +185,39 @@ class ErgoCubArmController:
         
         reply = yarp.Bottle()
         self.arm_cmd_port.write(arm_cmd, reply)
+
+    def send_commands(self, commands: dict[str, float]) -> None:
+        """Send commands from dict format."""
+        # Extract arm pose if available
+        arm_keys = ["x", "y", "z", "qx", "qy", "qz", "qw"]
+        if all(key in commands for key in arm_keys):
+            pose = np.array([commands[key] for key in arm_keys])
+        else:
+            pose = None
+        
+        # Extract finger commands if available  
+        finger_keys = ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]
+        finger_cmds = {k.split(".", 1)[1]: v for k, v in commands.items() if k.startswith(f"{self.arm_name}_fingers.")}
+        if finger_cmds and all(key in finger_cmds for key in finger_keys):
+            fingers = np.array([finger_cmds[key] for key in finger_keys])
+        else:
+            fingers = None
+        
+        # Send commands if we have them
+        if pose is not None:
+            self.send_command(pose, fingers if fingers is not None else np.zeros(6))
+
+    @property
+    def motor_features(self) -> dict[str, type]:
+        """Get motor features for this arm controller."""
+        features = {}
+        
+        # Arm pose (7 DOF)
+        for coord in ["x", "y", "z", "qx", "qy", "qz", "qw"]:
+            features[f"{self.arm_name}_arm.{coord}"] = float
+        
+        # Fingers (6 DOF)
+        for joint in ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]:
+            features[f"{self.arm_name}_fingers.{joint}"] = float
+        
+        return features

@@ -38,6 +38,7 @@ class ErgoCubMotorsBus:
         use_left_arm: bool = True,
         use_right_arm: bool = True,
         use_neck: bool = True,
+        use_bimanual_controller: bool = False,
     ):
         """
         Initialize ErgoCub YARP motors bus.
@@ -48,18 +49,28 @@ class ErgoCubMotorsBus:
             use_left_arm: Whether to enable left arm
             use_right_arm: Whether to enable right arm
             use_neck: Whether to enable neck
+            use_bimanual_controller: Whether to use bimanual controller instead of separate arm controllers
         """
         self.remote_prefix = remote_prefix
         self.local_prefix = local_prefix
+        self.use_bimanual_controller = use_bimanual_controller
         
         # Initialize controllers
         self.controllers = {}
         
-        if use_left_arm:
-            self.controllers["left_arm"] = ErgoCubArmController("left", remote_prefix, local_prefix)
-            
-        if use_right_arm:
-            self.controllers["right_arm"] = ErgoCubArmController("right", remote_prefix, local_prefix)
+        if use_bimanual_controller and (use_left_arm or use_right_arm):
+            # Use single bimanual controller for both arms
+            from .bimanual_controller import ErgoCubBimanualController
+            self.controllers["bimanual"] = ErgoCubBimanualController(
+                remote_prefix, local_prefix, use_left_arm, use_right_arm
+            )
+        else:
+            # Use separate controllers (legacy mode)
+            if use_left_arm:
+                self.controllers["left_arm"] = ErgoCubArmController("left", remote_prefix, local_prefix)
+                
+            if use_right_arm:
+                self.controllers["right_arm"] = ErgoCubArmController("right", remote_prefix, local_prefix)
             
         if use_neck:
             self.controllers["neck"] = ErgoCubNeckController(remote_prefix, local_prefix)
@@ -112,55 +123,13 @@ class ErgoCubMotorsBus:
         if not self.is_connected:
             raise DeviceNotConnectedError("ErgoCubMotorsBus not connected")
         
-        # Group commands by controller
-        controller_commands = {
-            "left_arm": {"pose": np.zeros(7), "fingers": np.zeros(6)},
-            "right_arm": {"pose": np.zeros(7), "fingers": np.zeros(6)},
-            "neck": {"orientation": np.zeros(4)},
-        }
-        
-        # Parse commands
-        for key, value in commands.items():
-            if key.startswith("left_arm."):
-                coord = key.split(".")[1]
-                if coord in ["x", "y", "z", "qx", "qy", "qz", "qw"]:
-                    idx = ["x", "y", "z", "qx", "qy", "qz", "qw"].index(coord)
-                    controller_commands["left_arm"]["pose"][idx] = value
-            elif key.startswith("right_arm."):
-                coord = key.split(".")[1]
-                if coord in ["x", "y", "z", "qx", "qy", "qz", "qw"]:
-                    idx = ["x", "y", "z", "qx", "qy", "qz", "qw"].index(coord)
-                    controller_commands["right_arm"]["pose"][idx] = value
-            elif key.startswith("left_fingers."):
-                finger_joint = key.split(".")[1]
-                if finger_joint in ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]:
-                    idx = ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"].index(finger_joint)
-                    controller_commands["left_arm"]["fingers"][idx] = value
-            elif key.startswith("right_fingers."):
-                finger_joint = key.split(".")[1]
-                if finger_joint in ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]:
-                    idx = ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"].index(finger_joint)
-                    controller_commands["right_arm"]["fingers"][idx] = value
-            elif key.startswith("neck."):
-                coord = key.split(".")[1]
-                if coord in ["qx", "qy", "qz", "qw"]:
-                    idx = ["qx", "qy", "qz", "qw"].index(coord)
-                    controller_commands["neck"]["orientation"][idx] = value
-        
-        # Send commands to controllers
-        if "left_arm" in self.controllers:
-            self.controllers["left_arm"].send_command(
-                controller_commands["left_arm"]["pose"],
-                controller_commands["left_arm"]["fingers"]
-            )
-        
-        if "right_arm" in self.controllers:
-            self.controllers["right_arm"].send_command(
-                controller_commands["right_arm"]["pose"],
-                controller_commands["right_arm"]["fingers"]
-            )
-        
-        if "neck" in self.controllers:
-            self.controllers["neck"].send_command(
-                controller_commands["neck"]["orientation"]
-            )
+        for controller in self.controllers.values():
+            controller.send_commands(commands)
+
+    @property
+    def motor_features(self) -> dict[str, type]:
+        """Get motor features by aggregating from all controllers."""
+        features = {}
+        for controller in self.controllers.values():
+            features.update(controller.motor_features)
+        return features

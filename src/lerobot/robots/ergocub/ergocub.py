@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import logging
 import uuid
 from functools import cached_property
@@ -27,6 +28,8 @@ from lerobot.motors.ergocub import ErgoCubMotorsBus
 from lerobot.robots.robot import Robot
 
 from .configuration_ergocub import ErgoCubConfig
+from .safety_utils import HandSafetyChecker
+from .metaquest_transforms import transform_metaquest_to_ergocub
 
 logger = logging.getLogger(__name__)
 
@@ -37,17 +40,18 @@ class ErgoCub(Robot):
     
     def __init__(self, config: ErgoCubConfig):
         super().__init__(config)
+        # Set YARP robot name for resource finding
+        os.environ["YARP_ROBOT_NAME"] = "ergoCubSN002"
+
         self.config = config
         self.session_id = uuid.uuid4()
         self._is_connected = False
 
-        # Safety control variables for hand position checking
-        self.is_arm_controlled = {"left": False, "right": False}
-        self.position_tolerance = 0.1  # 10 cm tolerance like in metaControllClient (0.2 was 20cm)
-
-        # Set YARP robot name for resource finding
-        import os
-        os.environ["YARP_ROBOT_NAME"] = "ergoCubSN002"
+        # Initialize safety checker
+        self.safety_checker = HandSafetyChecker(position_tolerance=0.1)
+        
+        # MetaQuest transforms enabled flag
+        self.use_metaquest_transforms = getattr(config, 'use_metaquest_transforms', False)
 
         yarp.Network.init()
 
@@ -72,6 +76,7 @@ class ErgoCub(Robot):
             use_left_arm=config.use_left_arm,
             use_right_arm=config.use_right_arm,
             use_neck=config.use_neck,
+            use_bimanual_controller=getattr(config, 'use_bimanual_controller', False),
         )
 
     def connect(self, calibrate: bool = True):
@@ -99,9 +104,6 @@ class ErgoCub(Robot):
         """Disconnect from the robot and perform any necessary cleanup."""
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-            
-        # Reset arm control state for safety
-        self.reset_arm_control()
             
         # Disconnect cameras
         for cam in self.cameras.values():
@@ -143,130 +145,28 @@ class ErgoCub(Robot):
         return obs
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
-        """
-        Send an action command to the robot.
-
-        Args:
-            action (dict[str, Any]): Dictionary representing the desired action.
-                Expected format for new motor system:
-                - left_arm.{x,y,z,qx,qy,qz,qw}: left arm position + orientation
-                - right_arm.{x,y,z,qx,qy,qz,qw}: right arm position + orientation
-                - left_fingers.{thumb_add,thumb_oc,index_add,index_oc,middle_oc,ring_pinky_oc}: left hand joints
-                - right_fingers.{thumb_add,thumb_oc,index_add,index_oc,middle_oc,ring_pinky_oc}: right hand joints
-                - neck.{qx,qy,qz,qw}: neck orientation
-
-        Returns:
-            dict[str, Any]: The action actually sent to the robot system.
-            
-        Raises:
-            DeviceNotConnectedError: if robot is not connected.
-        """
+        """Send an action command to the robot."""
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
         
-        # Check for invalid action values (NaN, all zeros, etc.) like metaControllClient
-        if not self._is_valid_action(action):
-            logger.debug("Action blocked: invalid or zero values detected")
-            # Return the current action without executing it
-            current_positions = self.bus.read_state()
-            return current_positions
+        # Apply MetaQuest coordinate transforms if enabled
+        action = transform_metaquest_to_ergocub(action)
         
-        # Safety check: only move if hand positions are close to current positions
-        if not self.check_hand_position_safety(action):
-            logger.debug("Action blocked: hand positions not within safety tolerance")
-            # Return the current action without executing it
-            current_positions = self.bus.read_state()
-            return current_positions
-            
-        # Validate action format matches expected action_features
-        expected_keys = set(self.action_features.keys())
-        received_keys = set(action.keys())
+        # Basic safety checks
+        arms_to_check = [side for side in ["left", "right"] 
+                        if getattr(self.config, f"use_{side}_arm")]
         
-        # Log any missing or extra keys for debugging
-        missing_keys = expected_keys - received_keys
-        extra_keys = received_keys - expected_keys
+        current_state = self.bus.read_state()
         
-        if missing_keys:
-            logger.warning("Missing action keys: %s", missing_keys)
-        if extra_keys:
-            logger.warning("Extra action keys: %s", extra_keys)
+        if not self.safety_checker.is_valid_action(action, arms_to_check):
+            return current_state
         
-        # Convert to dict if it's an array for compatibility
-        if isinstance(action, np.ndarray):
-            action_dict = {}
-            idx = 0
-            
-            # Map array to structured action format
-            for key in sorted(self.action_features.keys()):
-                if idx < len(action):
-                    action_dict[key] = float(action[idx])
-                    idx += 1
-                else:
-                    # Default values: 1.0 for quaternion w components, 0.0 for others
-                    action_dict[key] = 1.0 if key.endswith('.qw') else 0.0
-                    
-            action = action_dict
-        
-        # Validate and sanitize action values
-        validated_action = {}
-        for key, expected_type in self.action_features.items():
-            if key in action:
-                try:
-                    # Ensure value is of correct type
-                    validated_action[key] = expected_type(action[key])
-                    
-                    # Clamp quaternion components to valid range [-1, 1]
-                    if key.endswith(('.qx', '.qy', '.qz', '.qw')):
-                        validated_action[key] = max(-1.0, min(1.0, validated_action[key]))
-                        
-                except (ValueError, TypeError) as e:
-                    logger.warning("Invalid value for %s: %s (%s). Using default.", key, action[key], e)
-                    validated_action[key] = 1.0 if key.endswith('.qw') else 0.0
-            else:
-                # Use default values for missing keys
-                validated_action[key] = 1.0 if key.endswith('.qw') else 0.0
-        
-        # Normalize quaternions to ensure they are valid
-        quaternion_prefixes = []
-        if self.config.use_neck:
-            quaternion_prefixes.append('neck')
-        if self.config.use_left_arm:
-            quaternion_prefixes.append('left_arm')
-        if self.config.use_right_arm:
-            quaternion_prefixes.append('right_arm')
-            
-        for prefix in quaternion_prefixes:
-            qx_key = f"{prefix}.qx"
-            qy_key = f"{prefix}.qy" 
-            qz_key = f"{prefix}.qz"
-            qw_key = f"{prefix}.qw"
-            
-            if all(key in validated_action for key in [qx_key, qy_key, qz_key, qw_key]):
-                # Normalize quaternion
-                qx, qy, qz, qw = validated_action[qx_key], validated_action[qy_key], validated_action[qz_key], validated_action[qw_key]
-                norm = np.sqrt(qx*qx + qy*qy + qz*qz + qw*qw)
-                
-                if norm > 1e-6:  # Avoid division by zero
-                    validated_action[qx_key] = qx / norm
-                    validated_action[qy_key] = qy / norm  
-                    validated_action[qz_key] = qz / norm
-                    validated_action[qw_key] = qw / norm
-                else:
-                    # Use identity quaternion if norm is too small
-                    validated_action[qx_key] = 0.0
-                    validated_action[qy_key] = 0.0
-                    validated_action[qz_key] = 0.0
-                    validated_action[qw_key] = 1.0
+        if not self.safety_checker.check_hand_position_safety(action, current_state, arms_to_check):
+            return current_state
         
         # Send commands via motor bus
-        self.bus.send_commands(validated_action)
-        
-        # Log the action for debugging (first few keys only)
-        sample_keys = list(validated_action.keys())[:5]
-        sample_action = {k: f"{validated_action[k]:.3f}" for k in sample_keys}
-        logger.debug("Sending action (sample): %s, ...", sample_action)
-        
-        return validated_action
+        self.bus.send_commands(action)
+        return action
 
     @property
     def is_connected(self) -> bool:
@@ -290,172 +190,10 @@ class ErgoCub(Robot):
     def configure(self) -> None:
         """Apply any one-time configuration - no-op for ErgoCub."""
 
-    def get_current_hand_position(self, side: str) -> np.ndarray:
-        """
-        Get the current position of the specified hand from the robot's sensors.
-        
-        Args:
-            side (str): "left" or "right"
-            
-        Returns:
-            np.ndarray: Current hand position [x, y, z] in meters
-        """
-        try:
-            # Read current motor positions
-            current_positions = self.bus.read_state()
-            
-            # Extract position for the specified arm
-            arm_key = f"{side}_arm"
-            if arm_key in current_positions:
-                # Return position components [x, y, z]
-                return np.array([
-                    current_positions.get(f"{arm_key}.x", 0.0),
-                    current_positions.get(f"{arm_key}.y", 0.0), 
-                    current_positions.get(f"{arm_key}.z", 0.0)
-                ])
-            else:
-                logger.warning("No position data available for %s arm", side)
-                return np.zeros(3)
-                
-        except (RuntimeError, AttributeError) as e:
-            logger.warning("Failed to get current position for %s arm: %s", side, e)
-            return np.zeros(3)
-
-    def check_hand_position_safety(self, action: dict[str, Any]) -> bool:
-        """
-        Check if the target hand positions are close enough to current positions to safely move.
-        Based on the safety logic from metaControllClient.
-        
-        Args:
-            action (dict[str, Any]): Target action containing hand positions
-            
-        Returns:
-            bool: True if it's safe to move (both hands within tolerance or controlled)
-        """
-        arms_to_check = []
-        if self.config.use_left_arm:
-            arms_to_check.append("left")
-        if self.config.use_right_arm:
-            arms_to_check.append("right")
-            
-        for side in arms_to_check:
-            # Check if target position is valid (not all zeros, like metaControllClient)
-            target_pos = np.array([
-                action.get(f"{side}_hand.position.x", 0.0),
-                action.get(f"{side}_hand.position.y", 0.0),
-                action.get(f"{side}_hand.position.z", 0.0)
-            ])
-            
-            # Check for invalid poses (all zeros or NaN values, similar to metaControllClient)
-            if np.allclose(target_pos, 0.0, atol=1e-6) or np.any(np.isnan(target_pos)):
-                logger.debug("Invalid target position for %s arm: all zeros or NaN values", side)
-                return False
-            
-            if not self.is_arm_controlled[side]:
-                # Get current and target positions
-                current_pos = self.get_current_hand_position(side)
-                
-                # Calculate position error
-                position_error = target_pos - current_pos
-                max_error = np.max(np.abs(position_error))
-                
-                if max_error < self.position_tolerance:
-                    self.is_arm_controlled[side] = True
-                    logger.info("%s arm is now controlled (error: %.3fm < %.3fm)", 
-                              side.capitalize(), max_error, self.position_tolerance)
-                else:
-                    logger.debug("%s arm not ready: position error %.3fm > %.3fm", 
-                               side.capitalize(), max_error, self.position_tolerance)
-            
-        # Only move if all configured arms are controlled
-        controlled_arms = [side for side in arms_to_check if self.is_arm_controlled[side]]
-        return len(controlled_arms) == len(arms_to_check)
-
-    def reset_arm_control(self) -> None:
-        """
-        Reset the arm control state, requiring position check before movement.
-        Similar to the reset functionality in metaControllClient.
-        """
-        self.is_arm_controlled = {"left": False, "right": False}
-        logger.info("Arm control reset: hands must be repositioned within tolerance before movement")
-
-    def set_position_tolerance(self, tolerance: float) -> None:
-        """
-        Set the position tolerance for safety checking.
-        
-        Args:
-            tolerance (float): Position tolerance in meters (default 0.1m = 10cm)
-        """
-        self.position_tolerance = max(0.01, tolerance)  # Minimum 1cm tolerance
-        logger.info("Position tolerance set to %.3fm", self.position_tolerance)
-
-    def _is_valid_action(self, action: dict[str, Any]) -> bool:
-        """
-        Check if the action contains valid values (not all zeros, no NaN values).
-        Based on the isValidPose function from metaControllClient.
-        
-        Args:
-            action (dict[str, Any]): Action to validate
-            
-        Returns:
-            bool: True if action is valid, False otherwise
-        """
-        # Check for NaN values
-        for key, value in action.items():
-            if np.any(np.isnan(value)):
-                logger.debug("NaN value detected in action key: %s", key)
-                return False
-
-        
-        # Check if position values are all zeros for each configured arm
-        arms_to_check = []
-        if self.config.use_left_arm:
-            arms_to_check.append("left")
-        if self.config.use_right_arm:
-            arms_to_check.append("right")
-            
-        for side in arms_to_check:
-            # Check arm position values
-            arm_position_keys = [f"{side}_hand.position.x", f"{side}_hand.position.y", f"{side}_hand.position.z"]
-            arm_position_values = [action.get(key, 0.0) for key in arm_position_keys]
-            
-            # Sum of absolute values (like metaControllClient isValidPose)
-            position_sum = sum(abs(v) for v in arm_position_values)
-            if position_sum <= 1e-6:
-                logger.debug("Invalid action: %s arm position values are all zeros", side)
-                return False
-        
-        return True
-
     @property
     def _motors_ft(self) -> dict[str, type]:
-        """Helper property to get motor features in SO100 format."""
-        motors_ft = {}
-        
-        # Left arm pose (7 DOF)
-        if self.config.use_left_arm:
-            for coord in ["x", "y", "z", "qx", "qy", "qz", "qw"]:
-                motors_ft[f"left_arm.{coord}"] = float
-            
-            # Left fingers (6 DOF)
-            for joint in ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]:
-                motors_ft[f"left_fingers.{joint}"] = float
-        
-        # Right arm pose (7 DOF)
-        if self.config.use_right_arm:
-            for coord in ["x", "y", "z", "qx", "qy", "qz", "qw"]:
-                motors_ft[f"right_arm.{coord}"] = float
-            
-            # Right fingers (6 DOF)
-            for joint in ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]:
-                motors_ft[f"right_fingers.{joint}"] = float
-        
-        # Neck orientation (4 DOF)
-        if self.config.use_neck:
-            for coord in ["qx", "qy", "qz", "qw"]:
-                motors_ft[f"neck.{coord}"] = float
-        
-        return motors_ft
+        """Get motor features from the bus."""
+        return self.bus.motor_features
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:

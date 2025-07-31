@@ -432,7 +432,18 @@ def build_dataset_frame(
         if key in DEFAULT_FEATURES or not key.startswith(prefix):
             continue
         elif ft["dtype"] == "float32" and len(ft["shape"]) == 1:
-            frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
+            # The names in ft["names"] should match keys in values
+            # If they don't exist directly, skip this feature
+            try:
+                frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
+            except KeyError as e:
+                # Debug: print what keys are available vs what we're looking for
+                missing_key = str(e).strip("'")
+                available_keys = list(values.keys())
+                print(f"Missing key: {missing_key}")
+                print(f"Available keys: {available_keys}")
+                print(f"Feature names: {ft['names']}")
+                raise e
         elif ft["dtype"] in ["image", "video"]:
             frame[key] = values[key.removeprefix(f"{prefix}.images.")]
 
