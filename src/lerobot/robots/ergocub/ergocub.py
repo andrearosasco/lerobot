@@ -23,7 +23,6 @@ import numpy as np
 import yarp
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.motors import Motor, MotorNormMode
 from lerobot.motors.ergocub import ErgoCubMotorsBus
 from lerobot.robots.robot import Robot
 
@@ -66,33 +65,10 @@ class ErgoCub(Robot):
                 other_cameras = make_cameras_from_configs({cam_name: cam_config})
                 self.cameras.update(other_cameras)
 
-        # Create motors configuration for compatibility with MotorsBus interface
-        motors = {}
-        
-        # Define motors for left arm (pose + fingers)
-        if config.use_left_arm:
-            motors.update({
-                "left_arm": Motor(1, "ergocub_arm", MotorNormMode.RANGE_M100_100),
-                "left_fingers": Motor(2, "ergocub_fingers", MotorNormMode.RANGE_M100_100),
-            })
-        
-        # Define motors for right arm (pose + fingers)
-        if config.use_right_arm:
-            motors.update({
-                "right_arm": Motor(3, "ergocub_arm", MotorNormMode.RANGE_M100_100),
-                "right_fingers": Motor(4, "ergocub_fingers", MotorNormMode.RANGE_M100_100),
-            })
-        
-        # Define motor for neck
-        if config.use_neck:
-            motors["neck"] = Motor(5, "ergocub_neck", MotorNormMode.RANGE_M100_100)
-
         # Initialize the new ErgoCub motors bus
         self.bus = ErgoCubMotorsBus(
             remote_prefix=config.remote_prefix,
             local_prefix=f"{config.local_prefix}/{self.session_id}",
-            motors=motors,
-            calibration=None,  # No calibration needed for ErgoCub
             use_left_arm=config.use_left_arm,
             use_right_arm=config.use_right_arm,
             use_neck=config.use_neck,
@@ -161,7 +137,7 @@ class ErgoCub(Robot):
                 obs[f"{cam_name}_depth"] = cam_data["depth"]
         
         # Read motor data (poses and finger positions) using new motor bus
-        motor_data = self.bus.sync_read("Present_Position")
+        motor_data = self.bus.read_state()
         obs.update(motor_data)
         
         return obs
@@ -192,14 +168,14 @@ class ErgoCub(Robot):
         if not self._is_valid_action(action):
             logger.debug("Action blocked: invalid or zero values detected")
             # Return the current action without executing it
-            current_positions = self.bus.sync_read("Present_Position")
+            current_positions = self.bus.read_state()
             return current_positions
         
         # Safety check: only move if hand positions are close to current positions
         if not self.check_hand_position_safety(action):
             logger.debug("Action blocked: hand positions not within safety tolerance")
             # Return the current action without executing it
-            current_positions = self.bus.sync_read("Present_Position")
+            current_positions = self.bus.read_state()
             return current_positions
             
         # Validate action format matches expected action_features
@@ -283,7 +259,7 @@ class ErgoCub(Robot):
                     validated_action[qw_key] = 1.0
         
         # Send commands via motor bus
-        self.bus.sync_write("Goal_Position", validated_action)
+        self.bus.send_commands(validated_action)
         
         # Log the action for debugging (first few keys only)
         sample_keys = list(validated_action.keys())[:5]
@@ -326,7 +302,7 @@ class ErgoCub(Robot):
         """
         try:
             # Read current motor positions
-            current_positions = self.bus.sync_read("Present_Position")
+            current_positions = self.bus.read_state()
             
             # Extract position for the specified arm
             arm_key = f"{side}_arm"
