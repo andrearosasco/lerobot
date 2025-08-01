@@ -22,6 +22,7 @@ from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from .arm_controller import ErgoCubArmController
 from .neck_controller import ErgoCubNeckController
+from .finger_controller import ErgoCubFingerController
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,9 @@ class ErgoCubMotorsBus:
             
         if use_neck:
             self.controllers["neck"] = ErgoCubNeckController(remote_prefix, local_prefix)
+        
+        # Always add finger controller (fingers are always present)
+        self.controllers["fingers"] = ErgoCubFingerController(local_prefix)
         
         # Initialize YARP network
         yarp.Network.init()

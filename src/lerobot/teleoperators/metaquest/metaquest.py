@@ -49,11 +49,11 @@ class MetaQuest(Teleoperator):
         
         # Finger frame mappings for MetaQuest
         self.finger_index_pairs = [
-            ("thumb_tip", 1),
-            ("index_tip", 2), 
-            ("middle_tip", 3),
-            ("ring_tip", 4),
-            ("pinky_tip", 5)
+            ("thumb_tip", 5),
+            ("index_tip", 10), 
+            ("middle_tip", 15),
+            ("ring_tip", 20),
+            ("pinky_tip", 25)
         ]
 
     def __del__(self):
@@ -265,108 +265,61 @@ class MetaQuest(Teleoperator):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        try:
-            # Get head pose
-            head_pose = self._get_head_pose()
-            
-            # Get hand poses
-            left_hand_pose = self._get_hand_pose("left")
-            right_hand_pose = self._get_hand_pose("right")
-            
-            # Get finger poses
-            left_finger_poses = self._get_finger_poses("left")
-            right_finger_poses = self._get_finger_poses("right")
-            
-            # Build flattened action dictionary that matches action_features
-            action = {}
-            
-            # Head pose
-            action["head.position.x"] = head_pose["position"]["x"]
-            action["head.position.y"] = head_pose["position"]["y"] 
-            action["head.position.z"] = head_pose["position"]["z"]
-            action["head.orientation.qx"] = head_pose["orientation"]["qx"]
-            action["head.orientation.qy"] = head_pose["orientation"]["qy"]
-            action["head.orientation.qz"] = head_pose["orientation"]["qz"]
-            action["head.orientation.qw"] = head_pose["orientation"]["qw"]
-            
-            # Left hand pose
-            action["left_hand.position.x"] = left_hand_pose["position"]["x"]
-            action["left_hand.position.y"] = left_hand_pose["position"]["y"]
-            action["left_hand.position.z"] = left_hand_pose["position"]["z"]
-            action["left_hand.orientation.qx"] = left_hand_pose["orientation"]["qx"]
-            action["left_hand.orientation.qy"] = left_hand_pose["orientation"]["qy"]
-            action["left_hand.orientation.qz"] = left_hand_pose["orientation"]["qz"]
-            action["left_hand.orientation.qw"] = left_hand_pose["orientation"]["qw"]
-            
-            # Right hand pose
-            action["right_hand.position.x"] = right_hand_pose["position"]["x"]
-            action["right_hand.position.y"] = right_hand_pose["position"]["y"]
-            action["right_hand.position.z"] = right_hand_pose["position"]["z"]
-            action["right_hand.orientation.qx"] = right_hand_pose["orientation"]["qx"]
-            action["right_hand.orientation.qy"] = right_hand_pose["orientation"]["qy"]
-            action["right_hand.orientation.qz"] = right_hand_pose["orientation"]["qz"]
-            action["right_hand.orientation.qw"] = right_hand_pose["orientation"]["qw"]
-            
-            # Left finger poses
-            for finger_name in ["thumb", "index", "middle", "ring", "pinky"]:
-                if finger_name in left_finger_poses:
-                    action[f"left_fingers.{finger_name}.x"] = left_finger_poses[finger_name]["x"]
-                    action[f"left_fingers.{finger_name}.y"] = left_finger_poses[finger_name]["y"]
-                    action[f"left_fingers.{finger_name}.z"] = left_finger_poses[finger_name]["z"]
-                else:
-                    action[f"left_fingers.{finger_name}.x"] = 0.0
-                    action[f"left_fingers.{finger_name}.y"] = 0.0
-                    action[f"left_fingers.{finger_name}.z"] = 0.0
-            
-            # Right finger poses
-            for finger_name in ["thumb", "index", "middle", "ring", "pinky"]:
-                if finger_name in right_finger_poses:
-                    action[f"right_fingers.{finger_name}.x"] = right_finger_poses[finger_name]["x"]
-                    action[f"right_fingers.{finger_name}.y"] = right_finger_poses[finger_name]["y"]
-                    action[f"right_fingers.{finger_name}.z"] = right_finger_poses[finger_name]["z"]
-                else:
-                    action[f"right_fingers.{finger_name}.x"] = 0.0
-                    action[f"right_fingers.{finger_name}.y"] = 0.0
-                    action[f"right_fingers.{finger_name}.z"] = 0.0
+        # Get head pose
+        head_pose = self._get_head_pose()
+        
+        # Get hand poses
+        left_hand_pose = self._get_hand_pose("left")
+        right_hand_pose = self._get_hand_pose("right")
+        
+        # Get finger poses
+        left_finger_poses = self._get_finger_poses("left")
+        right_finger_poses = self._get_finger_poses("right")
+        
+        # Build flattened action dictionary that matches action_features
+        action = {}
+        
+        # Head pose
+        action["head.position.x"] = head_pose["position"]["x"]
+        action["head.position.y"] = head_pose["position"]["y"] 
+        action["head.position.z"] = head_pose["position"]["z"]
+        action["head.orientation.qx"] = head_pose["orientation"]["qx"]
+        action["head.orientation.qy"] = head_pose["orientation"]["qy"]
+        action["head.orientation.qz"] = head_pose["orientation"]["qz"]
+        action["head.orientation.qw"] = head_pose["orientation"]["qw"]
+        
+        # Left hand pose
+        action["left_hand.position.x"] = left_hand_pose["position"]["x"]
+        action["left_hand.position.y"] = left_hand_pose["position"]["y"]
+        action["left_hand.position.z"] = left_hand_pose["position"]["z"]
+        action["left_hand.orientation.qx"] = left_hand_pose["orientation"]["qx"]
+        action["left_hand.orientation.qy"] = left_hand_pose["orientation"]["qy"]
+        action["left_hand.orientation.qz"] = left_hand_pose["orientation"]["qz"]
+        action["left_hand.orientation.qw"] = left_hand_pose["orientation"]["qw"]
+        
+        # Right hand pose
+        action["right_hand.position.x"] = right_hand_pose["position"]["x"]
+        action["right_hand.position.y"] = right_hand_pose["position"]["y"]
+        action["right_hand.position.z"] = right_hand_pose["position"]["z"]
+        action["right_hand.orientation.qx"] = right_hand_pose["orientation"]["qx"]
+        action["right_hand.orientation.qy"] = right_hand_pose["orientation"]["qy"]
+        action["right_hand.orientation.qz"] = right_hand_pose["orientation"]["qz"]
+        action["right_hand.orientation.qw"] = right_hand_pose["orientation"]["qw"]
+        
+        # Left finger poses
+        for finger_name in ["thumb", "index", "middle", "ring", "pinky"]:
+
+            action[f"left_fingers.{finger_name}.x"] = left_finger_poses[finger_name]["x"]
+            action[f"left_fingers.{finger_name}.y"] = left_finger_poses[finger_name]["y"]
+            action[f"left_fingers.{finger_name}.z"] = left_finger_poses[finger_name]["z"]
+
+            action[f"right_fingers.{finger_name}.x"] = right_finger_poses[finger_name]["x"]
+            action[f"right_fingers.{finger_name}.y"] = right_finger_poses[finger_name]["y"]
+            action[f"right_fingers.{finger_name}.z"] = right_finger_poses[finger_name]["z"]
                 
-        except Exception as e:
-            print(f"Error getting MetaQuest data: {e}")
-            # Return default action if there's an error
-            action = self._get_default_flattened_action()
         
         return action
 
-    def _get_default_flattened_action(self) -> dict[str, Any]:
-        """Return a default flattened action structure with safe values."""
-        action = {}
-        
-        # Default head pose (identity orientation)
-        action["head.position.x"] = 0.0
-        action["head.position.y"] = 0.0
-        action["head.position.z"] = 0.0
-        action["head.orientation.qx"] = 0.0
-        action["head.orientation.qy"] = 0.0
-        action["head.orientation.qz"] = 0.0
-        action["head.orientation.qw"] = 1.0
-        
-        # Default hand poses (identity orientations)
-        for side in ["left_hand", "right_hand"]:
-            action[f"{side}.position.x"] = 0.0
-            action[f"{side}.position.y"] = 0.0
-            action[f"{side}.position.z"] = 0.0
-            action[f"{side}.orientation.qx"] = 0.0
-            action[f"{side}.orientation.qy"] = 0.0
-            action[f"{side}.orientation.qz"] = 0.0
-            action[f"{side}.orientation.qw"] = 1.0
-        
-        # Default finger poses (zero positions)
-        for side in ["left_fingers", "right_fingers"]:
-            for finger_name in ["thumb", "index", "middle", "ring", "pinky"]:
-                action[f"{side}.{finger_name}.x"] = 0.0
-                action[f"{side}.{finger_name}.y"] = 0.0
-                action[f"{side}.{finger_name}.z"] = 0.0
-        
-        return action
 
     @property
     def action_features(self):

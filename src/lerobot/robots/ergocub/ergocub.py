@@ -187,10 +187,13 @@ class ErgoCub(Robot):
                 
             # Extract finger tip positions as list of [x,y,z] positions
             finger_positions = []
+            finger_tip_keys = []  # Keep track of keys to remove later
+            
             for finger in ["thumb", "index", "middle", "ring", "pinky"]:
                 keys = [f"{side}_fingers.{finger}.{coord}" for coord in ["x", "y", "z"]]
                 if all(key in action for key in keys):
                     finger_positions.append([action[key] for key in keys])
+                    finger_tip_keys.extend(keys)  # Store keys for removal
             
             if len(finger_positions) == 5:  # All 5 fingers
                 # Use Manipulator to solve IK for finger tip positions
@@ -201,6 +204,10 @@ class ErgoCub(Robot):
                 for i, joint in enumerate(joint_names):
                     if i < len(joint_angles):
                         action[f"{side}_fingers.{joint}"] = joint_angles[i]
+                
+                # Remove the finger tip position keys from action
+                for key in finger_tip_keys:
+                    action.pop(key, None)
         
         return action
 

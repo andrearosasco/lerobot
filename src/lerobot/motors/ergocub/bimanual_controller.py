@@ -157,13 +157,20 @@ class ErgoCubBimanualController:
             if (side == "left" and not self.use_left_arm) or (side == "right" and not self.use_right_arm):
                 continue
                 
-            # Read arm encoders
+            # Read arm encoders with busy wait
             encoders_port = self.left_encoders_port if side == "left" else self.right_encoders_port
-            arm_bottle = encoders_port.read(False)
-            if arm_bottle:
-                arm_encoders = [arm_bottle.get(i).asFloat64() for i in range(min(7, arm_bottle.size()))]
-            else:
-                arm_encoders = [0.0] * 7
+            read_attempts = 0
+            while (arm_bottle := encoders_port.read(False)) is None:
+                read_attempts += 1
+                if read_attempts % 1000 == 0:  # Warning every 1000 attempts
+                    logger.warning(f"Still waiting for {side} arm encoder data (attempt {read_attempts})")
+                time.sleep(0.001)  # 1 millisecond sleep
+            
+            # Read all available encoders (arm + fingers)
+            all_encoders = [arm_bottle.get(i).asFloat64() for i in range(arm_bottle.size())]
+            # First 7 are arm joints, last 6 are finger joints
+            arm_encoders = all_encoders[:7] if len(all_encoders) >= 7 else [0.0] * 7
+            finger_encoders = all_encoders[7:13] if len(all_encoders) >= 13 else [0.0] * 6
             
             # Combine torso + arm encoders
             joint_positions = np.array(torso_encoders + arm_encoders)
@@ -186,9 +193,10 @@ class ErgoCubBimanualController:
                     f"{side}_arm.orientation.qw": quaternion[3],
                 })
                 
-                # Add dummy finger values
-                for joint in ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]:
-                    state[f"{side}_fingers.{joint}"] = 0.0
+                # Add actual finger values from encoders
+                finger_joint_names = ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]
+                for i, joint in enumerate(finger_joint_names):
+                    state[f"{side}_fingers.{joint}"] = finger_encoders[i] if i < len(finger_encoders) else 0.0
         
         return state
     

@@ -165,18 +165,15 @@ class ErgoCubNeckController:
         
         # Convert quaternion to rotation matrix (MetaControllServer expects 3x3 matrix)
         q = orientation / np.linalg.norm(orientation)  # Normalize quaternion
-        rot_matrix = R.from_quat(q).as_matrix()
+        rot_matrix = R.from_quat(q).as_matrix().reshape(-1)
         
         # Send RPC command to head controller
         neck_cmd = yarp.Bottle()
-        neck_cmd.addString("setOrientation")
+        neck_cmd.addString("setOrientationFlat")
         
         # Add rotation matrix as nested bottle
-        rot_bottle = neck_cmd.addList()
-        for i in range(3):
-            row_bottle = rot_bottle.addList()
-            for j in range(3):
-                row_bottle.addFloat64(rot_matrix[i, j])
+        for i in range(9):
+            neck_cmd.addFloat64(rot_matrix[i])
         
         reply = yarp.Bottle()
         self.neck_cmd_port.write(neck_cmd, reply)
@@ -184,7 +181,7 @@ class ErgoCubNeckController:
     def send_commands(self, commands: dict[str, float]) -> None:
         """Send commands from dict format."""
         # Extract neck orientation if available
-        quat_keys = ["qx", "qy", "qz", "qw"]
+        quat_keys = ["neck.orientation.qx", "neck.orientation.qy", "neck.orientation.qz", "neck.orientation.qw"]
         if all(key in commands for key in quat_keys):
             orientation = np.array([commands[key] for key in quat_keys])
             self.send_command(orientation)
