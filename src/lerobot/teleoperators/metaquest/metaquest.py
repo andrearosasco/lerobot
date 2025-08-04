@@ -24,6 +24,7 @@ from lerobot.errors import DeviceNotConnectedError
 from lerobot.teleoperators.teleoperator import Teleoperator
 
 from .configuration_metaquest import MetaQuestConfig
+from scipy.spatial.transform import Rotation as R
 
 
 class MetaQuest(Teleoperator):
@@ -157,34 +158,9 @@ class MetaQuest(Teleoperator):
         position = transform[:3, 3]
         rotation_matrix = transform[:3, :3]
         
-        # Convert rotation matrix to quaternion (x, y, z, w)
-        # Using Shepperd's method for numerical stability
-        trace = np.trace(rotation_matrix)
-        if trace > 0:
-            s = np.sqrt(trace + 1.0) * 2  # s = 4 * qw
-            qw = 0.25 * s
-            qx = (rotation_matrix[2, 1] - rotation_matrix[1, 2]) / s
-            qy = (rotation_matrix[0, 2] - rotation_matrix[2, 0]) / s
-            qz = (rotation_matrix[1, 0] - rotation_matrix[0, 1]) / s
-        else:
-            if rotation_matrix[0, 0] > rotation_matrix[1, 1] and rotation_matrix[0, 0] > rotation_matrix[2, 2]:
-                s = np.sqrt(1.0 + rotation_matrix[0, 0] - rotation_matrix[1, 1] - rotation_matrix[2, 2]) * 2
-                qw = (rotation_matrix[2, 1] - rotation_matrix[1, 2]) / s
-                qx = 0.25 * s
-                qy = (rotation_matrix[0, 1] + rotation_matrix[1, 0]) / s
-                qz = (rotation_matrix[0, 2] + rotation_matrix[2, 0]) / s
-            elif rotation_matrix[1, 1] > rotation_matrix[2, 2]:
-                s = np.sqrt(1.0 + rotation_matrix[1, 1] - rotation_matrix[0, 0] - rotation_matrix[2, 2]) * 2
-                qw = (rotation_matrix[0, 2] - rotation_matrix[2, 0]) / s
-                qx = (rotation_matrix[0, 1] + rotation_matrix[1, 0]) / s
-                qy = 0.25 * s
-                qz = (rotation_matrix[1, 2] + rotation_matrix[2, 1]) / s
-            else:
-                s = np.sqrt(1.0 + rotation_matrix[2, 2] - rotation_matrix[0, 0] - rotation_matrix[1, 1]) * 2
-                qw = (rotation_matrix[1, 0] - rotation_matrix[0, 1]) / s
-                qx = (rotation_matrix[0, 2] + rotation_matrix[2, 0]) / s
-                qy = (rotation_matrix[1, 2] + rotation_matrix[2, 1]) / s
-                qz = 0.25 * s
+        # Convert rotation matrix to quaternion (x, y, z, w) using scipy
+        quat = R.from_matrix(rotation_matrix).as_quat(canonical=True)  # [x, y, z, w]
+        qx, qy, qz, qw = quat[0], quat[1], quat[2], quat[3]
         
         return {
             "position": {"x": float(position[0]), "y": float(position[1]), "z": float(position[2])},
@@ -201,32 +177,8 @@ class MetaQuest(Teleoperator):
         rotation_matrix = transform[:3, :3]
         
         # Convert rotation matrix to quaternion (x, y, z, w)
-        trace = np.trace(rotation_matrix)
-        if trace > 0:
-            s = np.sqrt(trace + 1.0) * 2  # s = 4 * qw
-            qw = 0.25 * s
-            qx = (rotation_matrix[2, 1] - rotation_matrix[1, 2]) / s
-            qy = (rotation_matrix[0, 2] - rotation_matrix[2, 0]) / s
-            qz = (rotation_matrix[1, 0] - rotation_matrix[0, 1]) / s
-        else:
-            if rotation_matrix[0, 0] > rotation_matrix[1, 1] and rotation_matrix[0, 0] > rotation_matrix[2, 2]:
-                s = np.sqrt(1.0 + rotation_matrix[0, 0] - rotation_matrix[1, 1] - rotation_matrix[2, 2]) * 2
-                qw = (rotation_matrix[2, 1] - rotation_matrix[1, 2]) / s
-                qx = 0.25 * s
-                qy = (rotation_matrix[0, 1] + rotation_matrix[1, 0]) / s
-                qz = (rotation_matrix[0, 2] + rotation_matrix[2, 0]) / s
-            elif rotation_matrix[1, 1] > rotation_matrix[2, 2]:
-                s = np.sqrt(1.0 + rotation_matrix[1, 1] - rotation_matrix[0, 0] - rotation_matrix[2, 2]) * 2
-                qw = (rotation_matrix[0, 2] - rotation_matrix[2, 0]) / s
-                qx = (rotation_matrix[0, 1] + rotation_matrix[1, 0]) / s
-                qy = 0.25 * s
-                qz = (rotation_matrix[1, 2] + rotation_matrix[2, 1]) / s
-            else:
-                s = np.sqrt(1.0 + rotation_matrix[2, 2] - rotation_matrix[0, 0] - rotation_matrix[1, 1]) * 2
-                qw = (rotation_matrix[1, 0] - rotation_matrix[0, 1]) / s
-                qx = (rotation_matrix[0, 2] + rotation_matrix[2, 0]) / s
-                qy = (rotation_matrix[1, 2] + rotation_matrix[2, 1]) / s
-                qz = 0.25 * s
+        quat = R.from_matrix(rotation_matrix).as_quat(canonical=True)  # [x, y, z, w]
+        qx, qy, qz, qw = quat[0], quat[1], quat[2], quat[3]
         
         return {
             "position": {"x": float(position[0]), "y": float(position[1]), "z": float(position[2])},

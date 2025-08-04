@@ -157,7 +157,7 @@ class ErgoCubArmController:
         position = T[:3, 3]
         quaternion = R.from_matrix(T[:3, :3]).as_quat()  # [x, y, z, w]
         pose = np.concatenate([position, quaternion])
-        fingers = arm_values[7:13] if len(arm_values) >= 13 else np.zeros(6)
+        fingers = arm_values[7:13] * 180 / np.pi
         
         # Return state in SO100-like format
         pose_keys = [f"{self.arm_name}_arm.{k}" for k in ["x", "y", "z", "qx", "qy", "qz", "qw"]]

@@ -6,7 +6,8 @@ python -m lerobot.record \
    --robot.encoders_control_boards='[head,left_arm,right_arm,torso]' \
    --teleop.type=metaquest \
    --teleop.control_boards='[neck,left_arm,right_arm,fingers]' \
-   --display_data=false \
+   --display_data=true \
    --dataset.repo_id=ar0s/ergocub-debug \
-   --dataset.num_episodes=10 \
-   --dataset.single_task="Pick up objects and place them in containers"
+   --dataset.num_episodes=2 \
+   --dataset.single_task="Pick up the orange plush from the table" \
+   --resume True

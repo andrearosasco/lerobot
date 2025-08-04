@@ -180,7 +180,7 @@ class ErgoCubBimanualController:
                 pose_matrix = self.kinematics_solvers[side].forward_kinematics(joint_positions)
                 position = pose_matrix[:3, 3]
                 rotation = R.from_matrix(pose_matrix[:3, :3])
-                quaternion = rotation.as_quat()  # [x, y, z, w]
+                quaternion = rotation.as_quat(canonical=True)  # [x, y, z, w]
                 
                 # Add to state
                 state.update({

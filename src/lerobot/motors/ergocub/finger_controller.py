@@ -107,13 +107,13 @@ class ErgoCubFingerController:
             for joint in self.joint_names:
                 value = left_finger_cmds.get(joint, 0.0)
                 # Convert from radians to degrees
-                finger_bottle.addFloat64(float(value) * 180 / math.pi)
+                finger_bottle.addFloat64(value)
             
             # Add right hand joints (next 6 floats)
             for joint in self.joint_names:
                 value = right_finger_cmds.get(joint, 0.0)
                 # Convert from radians to degrees
-                finger_bottle.addFloat64(float(value) * 180 / math.pi)
+                finger_bottle.addFloat64(value)
             
             # Send the bottle
             self.finger_cmd_port.write(finger_bottle)

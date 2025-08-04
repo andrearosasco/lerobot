@@ -195,19 +195,19 @@ class ErgoCub(Robot):
                     finger_positions.append([action[key] for key in keys])
                     finger_tip_keys.extend(keys)  # Store keys for removal
             
-            if len(finger_positions) == 5:  # All 5 fingers
-                # Use Manipulator to solve IK for finger tip positions
-                self.finger_kinematics[side].inverse_kinematic(finger_positions)
-                # Get the computed joint angles
-                joint_angles = self.finger_kinematics[side].get_driver_value()
-                joint_names = ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]
-                for i, joint in enumerate(joint_names):
-                    if i < len(joint_angles):
-                        action[f"{side}_fingers.{joint}"] = joint_angles[i]
-                
-                # Remove the finger tip position keys from action
-                for key in finger_tip_keys:
-                    action.pop(key, None)
+            assert len(finger_positions) == 5  # All 5 fingers
+            # Use Manipulator to solve IK for finger tip positions
+            self.finger_kinematics[side].inverse_kinematic(finger_positions)
+            # Get the computed joint angles
+            joint_angles = self.finger_kinematics[side].get_driver_value()
+            joint_names = ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]
+            for i, joint in enumerate(joint_names):
+                if i < len(joint_angles):
+                    action[f"{side}_fingers.{joint}"] = joint_angles[i] * 180 / np.pi
+            
+            # Remove the finger tip position keys from action
+            for key in finger_tip_keys:
+                action.pop(key, None)
         
         return action
 
