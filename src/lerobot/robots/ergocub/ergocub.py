@@ -55,11 +55,11 @@ class ErgoCub(Robot):
         self.finger_kinematics = {}
         
         if config.use_left_arm:
-            left_hand_urdf = "/usr/local/src/robot/lerobot/src/lerobot/robots/ergocub/ergocub_hand_left/model.urdf"
+            left_hand_urdf = "src/lerobot/robots/ergocub/ergocub_hand_left/model.urdf"
             self.finger_kinematics["left"] = Manipulator(left_hand_urdf)
         
         if config.use_right_arm:
-            right_hand_urdf = "/usr/local/src/robot/lerobot/src/lerobot/robots/ergocub/ergocub_hand_right/model.urdf"
+            right_hand_urdf = "src/lerobot/robots/ergocub/ergocub_hand_right/model.urdf"
             self.finger_kinematics["right"] = Manipulator(right_hand_urdf)
 
         yarp.Network.init()
