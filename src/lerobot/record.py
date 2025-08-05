@@ -304,7 +304,17 @@ def record_loop(
             log_rerun_data(observation, action)
 
         dt_s = time.perf_counter() - start_loop_t
-        busy_wait(1 / fps - dt_s)
+        target_dt_s = 1 / fps
+        
+        # Warn if control frequency drops below target fps
+        if dt_s > target_dt_s:
+            actual_fps = 1 / dt_s
+            logging.warning(
+                f"Control frequency dropped below target: {actual_fps:.1f} Hz (actual) vs {fps} Hz (target). "
+                f"Loop took {dt_s*1000:.1f}ms vs target {target_dt_s*1000:.1f}ms."
+            )
+        
+        busy_wait(target_dt_s - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
 
