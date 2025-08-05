@@ -51,15 +51,15 @@ class CameraInterface:
         # Create and open RGB port if needed
         if self.rgb_shape:
             self.rgb_port = yarp.BufferedPortImageRgb()
-            self.rgb_port.open(f"{self.local_prefix}/{self.stream_name}/rgbImage:i")
+            self.rgb_port.open(f"{self.local_prefix}/{self.stream_name}")
             
             self.yarp_rgb_image = yarp.ImageRgb()
             self.yarp_rgb_image.resize(self.rgb_shape[0], self.rgb_shape[1])
             self.rgb_buffer = bytearray(self.rgb_shape[0] * self.rgb_shape[1] * 3)
             self.yarp_rgb_image.setExternal(self.rgb_buffer, self.rgb_shape[0], self.rgb_shape[1])
             
-            rgb_remote_name = f"{self.remote_prefix}/{self.stream_name}/rgbImage:o"
-            rgb_local_name = f"{self.local_prefix}/{self.stream_name}/rgbImage:i"
+            rgb_remote_name = f"{self.remote_prefix}/{self.stream_name}"
+            rgb_local_name = f"{self.local_prefix}/{self.stream_name}"
             
             while not yarp.Network.connect(rgb_remote_name, rgb_local_name, "mjpeg"):
                 print(f"Waiting for RGB port {rgb_remote_name} to connect...")
