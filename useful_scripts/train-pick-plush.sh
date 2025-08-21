@@ -2,7 +2,7 @@
 	-m lerobot.scripts.train \
 	--wandb.enable=true \
 	--policy.type=diffusion \
-	--policy.repo_id=steb6/traind-ergocub-move-plush \
-	--dataset.repo_id=steb6/ergocub-move-plush  \
+	--policy.repo_id=steb6/traind-ergocub-pick-plush \
+	--dataset.repo_id=ar0s/ergocub-pick-plush \
 	--policy.device=cuda \
-	--output_dir=checkpoints/ergocub-move-plush
+	--output_dir=checkpoints/ergocub-pick-plush

@@ -1,4 +1,4 @@
-python \
+/home/sberti/.conda/envs/lerobot/bin/python \
 	-m lerobot.scripts.train \
 	--wandb.enable=true \
 	--policy.type=diffusion \
