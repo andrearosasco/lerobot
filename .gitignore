@@ -173,3 +173,8 @@ outputs/
 
 # Dev folders
 .cache/*
+
+# Ours
+steb6
+ar0s
+checkpoints
