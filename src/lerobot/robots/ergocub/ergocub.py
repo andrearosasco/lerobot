@@ -158,12 +158,28 @@ class ErgoCub(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
         
+        
+        # Check for any invalid values that might cause safety checker to fail
+        invalid_keys = []
+        for key, value in action.items():
+            if value is None or (hasattr(value, '__iter__') and not isinstance(value, (str, bytes))):
+                invalid_keys.append((key, value))
+            try:
+                float(value)  # Try to convert to float
+            except (ValueError, TypeError):
+                invalid_keys.append((key, value))
+        
+        if invalid_keys:
+            print(f"🔧 send_action: Found {len(invalid_keys)} invalid action values:")
+            for key, value in invalid_keys[:5]:  # Show first 5
+                print(f"🔧   {key}: {value} (type: {type(value)})")
+        
         # Apply MetaQuest coordinate transforms if enabled
         action = transform_metaquest_to_ergocub(action)
         # Compute finger joint angles from finger tip positions
         action = self.compute_finger_joints(action)
         
-        # Basic safety checks
+        # Basic safety checks (action must be in robot format by now)
         arms_to_check = [side for side in ["left", "right"] 
                         if getattr(self.config, f"use_{side}_arm")]
         
@@ -180,12 +196,24 @@ class ErgoCub(Robot):
         return action
 
     def compute_finger_joints(self, action: dict[str, Any]) -> dict[str, Any]:
-        """Compute finger joint angles from MetaQuest finger tip positions using Manipulator."""
+        """Compute finger joint angles from MetaQuest finger tip positions using Manipulator.
+        
+        If the action already contains direct joint commands (from policy), skip IK computation.
+        If the action contains finger tip positions (from teleoperation), compute joint angles via IK.
+        """
         for side in ["left", "right"]:
             if side not in self.finger_kinematics:
                 continue
+            
+            # Check if action already contains direct finger joint commands
+            joint_names = ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]
+            has_direct_joints = any(f"{side}_fingers.{joint}" in action for joint in joint_names)
+            
+            if has_direct_joints:
+                # Action contains direct joint commands (from policy) - skip IK computation
+                continue
                 
-            # Extract finger tip positions as list of [x,y,z] positions
+            # Extract finger tip positions as list of [x,y,z] positions (from teleoperation)
             finger_positions = []
             finger_tip_keys = []  # Keep track of keys to remove later
             
@@ -195,12 +223,15 @@ class ErgoCub(Robot):
                     finger_positions.append([action[key] for key in keys])
                     finger_tip_keys.extend(keys)  # Store keys for removal
             
-            assert len(finger_positions) == 5  # All 5 fingers
+            if len(finger_positions) == 0:
+                # No finger data in action - skip
+                continue
+                
+            assert len(finger_positions) == 5  # All 5 fingers for teleoperation
             # Use Manipulator to solve IK for finger tip positions
             self.finger_kinematics[side].inverse_kinematic(finger_positions)
             # Get the computed joint angles
             joint_angles = self.finger_kinematics[side].get_driver_value()
-            joint_names = ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]
             for i, joint in enumerate(joint_names):
                 if i < len(joint_angles):
                     action[f"{side}_fingers.{joint}"] = joint_angles[i] * 180 / np.pi

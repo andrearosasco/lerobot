@@ -37,10 +37,22 @@ HEAD_ADAPTER = np.array([
 
 
 def transform_metaquest_to_ergocub(action: Dict[str, Any]) -> Dict[str, Any]:
-    """Transform MetaQuest action to ErgoCub coordinates."""
+    """Transform MetaQuest action to ErgoCub coordinates.
+    
+    If action contains MetaQuest format keys (e.g. left_hand.position.x), transform them.
+    If action contains robot format keys (e.g. left_arm.position.x), pass them through unchanged.
+    """
     result = {}
     
-    # Transform hands
+    # Check if this is MetaQuest format or robot format
+    has_metaquest_keys = any(key.startswith(('left_hand.', 'right_hand.', 'head.')) for key in action.keys())
+    has_robot_keys = any(key.startswith(('left_arm.', 'right_arm.', 'neck.')) for key in action.keys())
+    
+    if has_robot_keys and not has_metaquest_keys:
+        # Already in robot format - pass through unchanged
+        return action.copy()
+    
+    # Transform hands from MetaQuest format
     for side in ['left', 'right']:
         # Check if hand data exists
         pos_keys = [f'{side}_hand.position.x', f'{side}_hand.position.y', f'{side}_hand.position.z']
