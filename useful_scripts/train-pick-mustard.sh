@@ -1,8 +1,14 @@
 /home/sberti/.conda/envs/lerobot/bin/python \
 	-m lerobot.scripts.train \
-	--wandb.enable=true \
 	--policy.type=diffusion \
 	--policy.repo_id=steb6/traind-ergocub-pick-mustard \
 	--dataset.repo_id=ar0s/ergocub-pick-mustard \
 	--policy.device=cuda \
-	--output_dir=checkpoints/ergocub-pick-mustard
+	--output_dir=checkpoints/ergocub-pick-mustard \
+	--dataset.input_size=320,240 \
+	--policy.sampler=ddim \
+	--policy.inference_timestamps=10 \
+	--dataset.use_rgb=true \
+	--dataset.use_ir=false \
+	--wandb.enable=true \
+	--dataset.image_keys=observation.images.rgb

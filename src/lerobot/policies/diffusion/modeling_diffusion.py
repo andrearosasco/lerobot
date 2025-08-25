@@ -454,15 +454,11 @@ class DiffusionRgbEncoder(nn.Module):
         super().__init__()
         # Set up optional preprocessing.
         if config.crop_shape is not None:
-            self.do_crop = True
-            # Always use center crop for eval
-            self.center_crop = torchvision.transforms.CenterCrop(config.crop_shape)
-            if config.crop_is_random:
-                self.maybe_random_crop = torchvision.transforms.RandomCrop(config.crop_shape)
-            else:
-                self.maybe_random_crop = self.center_crop
+            self.do_resize = True
+            # Use resize instead of crop to preserve all visual information
+            self.resize_transform = torchvision.transforms.Resize(config.crop_shape)
         else:
-            self.do_crop = False
+            self.do_resize = False
 
         # Set up backbone.
         backbone_model = getattr(torchvision.models, config.vision_backbone)(
@@ -506,13 +502,9 @@ class DiffusionRgbEncoder(nn.Module):
         Returns:
             (B, D) image feature.
         """
-        # Preprocess: maybe crop (if it was set up in the __init__).
-        if self.do_crop:
-            if self.training:  # noqa: SIM108
-                x = self.maybe_random_crop(x)
-            else:
-                # Always use center crop for eval.
-                x = self.center_crop(x)
+        # Preprocess: apply resize transform (if it was set up in the __init__).
+        if self.do_resize:
+            x = self.resize_transform(x)
         # Extract backbone feature.
         x = torch.flatten(self.pool(self.backbone(x)), start_dim=1)
         # Final linear layer with non-linearity.

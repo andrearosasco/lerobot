@@ -87,6 +87,14 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
         )
         delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
+        image_keys = cfg.dataset.image_keys
+        # If image_keys is specified, filter features to only include the requested image keys
+        if image_keys is not None:
+            # Filter out image features that are not in the requested image_keys
+            features_to_remove = [k for k in ds_meta.image_keys if k not in image_keys]
+            for key in features_to_remove:
+                if key in ds_meta.info["features"]:
+                    del ds_meta.info["features"][key]
         dataset = LeRobotDataset(
             cfg.dataset.repo_id,
             root=cfg.dataset.root,
@@ -95,6 +103,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             image_transforms=image_transforms,
             revision=cfg.dataset.revision,
             video_backend=cfg.dataset.video_backend,
+            image_keys=cfg.dataset.image_keys,
         )
     else:
         raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
