@@ -80,6 +80,12 @@ def main():
         default=None,
         help="Image crop width for preprocessing",
     )
+    parser.add_argument(
+        "--action-delta-scale",
+        type=float,
+        default=0.1,
+        help="Scale factor for action delta (e.g., 0.1 means 10% of the delta is applied each step)",
+    )
 
     args = parser.parse_args()
 
@@ -297,6 +303,20 @@ def main():
                 for i, key in enumerate(robot.action_features)
             }
 
+            # --- SCALE ACTION DELTA TO USER-DEFINED FRACTION AND PRINT DELTAS ---
+            scale = args.action_delta_scale
+            if not hasattr(main, "_prev_action"):
+                main._prev_action = None
+            prev_action = main._prev_action
+            deltas = {}
+            if prev_action is not None:
+                for k in action:
+                    delta = action[k] - prev_action[k]
+                    action[k] = prev_action[k] + scale * delta
+                    deltas[k] = delta
+                # print(f"Action deltas: {{}}".format({{k: f"{deltas[k]:.4f}" for k in deltas}}))
+            main._prev_action = action.copy()
+            # --- END SCALE ---
             # Send action to robot
             robot.send_action(action)
 
