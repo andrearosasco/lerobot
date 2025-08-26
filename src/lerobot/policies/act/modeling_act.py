@@ -490,6 +490,13 @@ class ACT(nn.Module):
             # NOTE: If modifying this section, verify on MPS devices that
             # gradients remain stable (no explosions or NaNs).
             for img in batch["observation.images"]:
+                # Apply image preprocessing if crop_shape is specified
+                if self.config.crop_shape is not None:
+                    # Resize image to target resolution
+                    img = torchvision.transforms.functional.resize(
+                        img, size=self.config.crop_shape, antialias=True
+                    )
+                
                 cam_features = self.backbone(img)["feature_map"]
                 cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
                 cam_features = self.encoder_img_feat_input_proj(cam_features)
