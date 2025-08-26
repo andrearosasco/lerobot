@@ -56,6 +56,30 @@ def main():
         default="/lerobot",
         help="Local prefix for ErgoCub robot",
     )
+    parser.add_argument(
+        "--noise_scheduler_type",
+        type=str,
+        default=None,
+        help="Noise scheduler type for diffusion policies (e.g., DDIM, DDPM)",
+    )
+    parser.add_argument(
+        "--num_inference_steps",
+        type=int,
+        default=None,
+        help="Number of inference/denoising steps for diffusion policies",
+    )
+    parser.add_argument(
+        "--crop_height",
+        type=int,
+        default=None,
+        help="Image crop height for preprocessing",
+    )
+    parser.add_argument(
+        "--crop_width",
+        type=int,
+        default=None,
+        help="Image crop width for preprocessing",
+    )
 
     args = parser.parse_args()
 
@@ -125,6 +149,39 @@ def main():
         # Load the pretrained policy (this loads weights + normalization stats)
         policy = policy_class.from_pretrained(args.policy_path)
         print("   ✅ Successfully loaded pretrained policy with normalization stats")
+
+        # Configure inference settings for diffusion policies
+        if policy_config.type == "diffusion" and hasattr(policy, 'noise_scheduler'):
+            print("   🔧 Configuring diffusion policy inference settings...")
+            
+            # Set noise scheduler type if specified
+            if args.noise_scheduler_type:
+                print(f"   Setting noise scheduler type: {args.noise_scheduler_type}")
+                if hasattr(policy.noise_scheduler, 'scheduler_type'):
+                    policy.noise_scheduler.scheduler_type = args.noise_scheduler_type
+                elif hasattr(policy, 'scheduler_type'):
+                    policy.scheduler_type = args.noise_scheduler_type
+                else:
+                    print(f"   ⚠️  Warning: Cannot set scheduler type on this policy")
+            
+            # Set number of inference steps if specified
+            if args.num_inference_steps:
+                print(f"   Setting inference steps: {args.num_inference_steps}")
+                if hasattr(policy, 'num_inference_steps'):
+                    policy.num_inference_steps = args.num_inference_steps
+                elif hasattr(policy.noise_scheduler, 'num_inference_steps'):
+                    policy.noise_scheduler.num_inference_steps = args.num_inference_steps
+                else:
+                    print(f"   ⚠️  Warning: Cannot set inference steps on this policy")
+        
+        # Configure image preprocessing if crop dimensions are specified
+        if args.crop_height and args.crop_width:
+            print(f"   🖼️  Configuring image crop size: {args.crop_height}x{args.crop_width}")
+            if hasattr(policy, 'config') and hasattr(policy.config, 'crop_shape'):
+                policy.config.crop_shape = [args.crop_height, args.crop_width]
+                print(f"   Set crop_shape to: {policy.config.crop_shape}")
+            else:
+                print(f"   ⚠️  Warning: Cannot set crop_shape on this policy")
 
         print("✅ Policy loaded successfully!")
     except Exception as e:
