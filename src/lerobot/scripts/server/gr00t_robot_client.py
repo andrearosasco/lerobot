@@ -11,3 +11,4 @@
 # if we do not want to modify the gr00t policy_server we will need to change the data format sent by the client
 # (e.g. no must_go flag and hopefully not much more)
 
+# We will write this to run in lerobot environment + zmq but it shouldn't be dependent on other gr00t dependencies
