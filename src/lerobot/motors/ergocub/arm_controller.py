@@ -21,6 +21,7 @@ from typing import Dict, Optional, TYPE_CHECKING
 import numpy as np
 import yarp
 from scipy.spatial.transform import Rotation as R
+from .urdf_utils import resolve_ergocub_urdf
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.model.kinematics import RobotKinematics
 
@@ -57,10 +58,21 @@ class ErgoCubArmController:
         # Encoder reading for pose computation  
         self.encoders_port = yarp.BufferedPortVector()
         self.torso_encoders_port = yarp.BufferedPortVector()
-        
-        # Initialize kinematics solver with torso + arm joints
-        urdf_file = yarp.ResourceFinder().findFileByName("model.urdf")
-        joint_names = ["torso_roll", "torso_pitch", "torso_yaw"] + [f"{self.arm_name[0]}_shoulder_pitch", f"{self.arm_name[0]}_shoulder_roll", f"{self.arm_name[0]}_shoulder_yaw", f"{self.arm_name[0]}_elbow", f"{self.arm_name[0]}_wrist_yaw", f"{self.arm_name[0]}_wrist_roll", f"{self.arm_name[0]}_wrist_pitch"]
+
+        # Initialize kinematics solver with torso + arm joints using shared resolver
+        urdf_file = resolve_ergocub_urdf()
+        joint_names = [
+            "torso_roll",
+            "torso_pitch",
+            "torso_yaw",
+            f"{self.arm_name[0]}_shoulder_pitch",
+            f"{self.arm_name[0]}_shoulder_roll",
+            f"{self.arm_name[0]}_shoulder_yaw",
+            f"{self.arm_name[0]}_elbow",
+            f"{self.arm_name[0]}_wrist_yaw",
+            f"{self.arm_name[0]}_wrist_roll",
+            f"{self.arm_name[0]}_wrist_pitch",
+        ]
         self.kinematics_solver = RobotKinematics(urdf_file, f"{self.arm_name[0]}_hand_palm", joint_names)
         
     @property
