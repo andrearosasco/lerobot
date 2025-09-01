@@ -86,6 +86,7 @@ class ErgoCub(Robot):
             use_right_arm=config.use_right_arm,
             use_neck=config.use_neck,
             use_bimanual_controller=getattr(config, 'use_bimanual_controller', False),
+            use_fingers=getattr(config, 'use_fingers', True),
         )
 
     def connect(self, calibrate: bool = True):
