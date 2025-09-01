@@ -1,0 +1,78 @@
+{
+    "state": {
+        "left_arm_position": {
+            "start": 0,
+            "end": 3
+        },
+        "left_arm_orientation": {
+            "start": 3,
+            "end": 7,
+            "rotation_type": "quaternion"
+        },
+        "right_arm_position": {
+            "start": 7,
+            "end": 10
+        },
+        "right_arm_orientation": {
+            "start": 10,
+            "end": 14,
+            "rotation_type": "quaternion"
+        },
+        "neck_orientation": {
+            "start": 14,
+            "end": 18,
+            "rotation_type": "quaternion"
+        },
+        "left_hand": {
+            "start": 18,
+            "end": 24
+        },
+        "right_hand": {
+            "start": 24,
+            "end": 30
+        }
+    },
+    "action": {
+        "left_arm_position": {
+            "start": 0,
+            "end": 3
+        },
+        "left_arm_orientation": {
+            "start": 3,
+            "end": 7,
+            "rotation_type": "quaternion"
+        },
+        "right_arm_position": {
+            "start": 7,
+            "end": 10
+        },
+        "right_arm_orientation": {
+            "start": 10,
+            "end": 14,
+            "rotation_type": "quaternion"
+        },
+        "neck_orientation": {
+            "start": 14,
+            "end": 18,
+            "rotation_type": "quaternion"
+        },
+        "left_hand": {
+            "start": 18,
+            "end": 24
+        },
+        "right_hand": {
+            "start": 24,
+            "end": 30
+        }
+    },
+    "video": {
+        "ego_view": {
+            "original_key": "observation.images.agentview"
+        }
+    },
+    "annotation": {
+        "human.action.task_description": {
+          "original_key": "task_index"
+        }
+    }
+}
