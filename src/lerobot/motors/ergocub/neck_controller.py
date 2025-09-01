@@ -21,6 +21,7 @@ from typing import Dict, Optional, TYPE_CHECKING
 import numpy as np
 import yarp
 from scipy.spatial.transform import Rotation as R
+from .urdf_utils import resolve_ergocub_urdf
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.model.kinematics import RobotKinematics
 
@@ -52,10 +53,17 @@ class ErgoCubNeckController:
         self.neck_cmd_port = yarp.RpcClient()
         self.encoders_port = yarp.BufferedPortVector()
         self.torso_encoders_port = yarp.BufferedPortVector()
-        
-        # Initialize kinematics solver with torso + neck joints
-        urdf_file = yarp.ResourceFinder().findFileByName("model.urdf")
-        joint_names = ["torso_roll", "torso_pitch", "torso_yaw", "neck_pitch", "neck_roll", "neck_yaw"]
+
+        # Initialize kinematics solver with torso + neck joints using shared resolver
+        urdf_file = resolve_ergocub_urdf()
+        joint_names = [
+            "torso_roll",
+            "torso_pitch",
+            "torso_yaw",
+            "neck_pitch",
+            "neck_roll",
+            "neck_yaw",
+        ]
         self.kinematics_solver = RobotKinematics(urdf_file, "head", joint_names)
     
     @property
