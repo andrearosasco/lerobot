@@ -126,12 +126,10 @@ class HandSafetyChecker:
                 
                 if max_error < self.position_tolerance:
                     self.is_arm_controlled[side] = True
-                    logger.info("%s arm is now controlled (error: %.3fm < %.3fm)", 
-                              side.capitalize(), max_error, self.position_tolerance)
+                    print(f"{side.capitalize()} arm is now controlled (error: {max_error:.3f}m < {self.position_tolerance:.3f}m)")
                 else:
-                    logger.debug("%s arm not ready: position error %.3fm > %.3fm", 
-                               side.capitalize(), max_error, self.position_tolerance)
-        
+                    print(f"{side.capitalize()} arm not ready: position error {max_error:.3f}m > {self.position_tolerance:.3f}m")
+
         # Only move if all configured arms are controlled
         controlled_arms = [side for side in arms_to_check if self.is_arm_controlled[side]]
         return len(controlled_arms) == len(arms_to_check)

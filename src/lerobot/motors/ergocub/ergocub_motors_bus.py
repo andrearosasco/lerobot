@@ -40,6 +40,7 @@ class ErgoCubMotorsBus:
         use_right_arm: bool = True,
         use_neck: bool = True,
         use_bimanual_controller: bool = False,
+        use_fingers: bool = True,
     ):
         """
         Initialize ErgoCub YARP motors bus.
@@ -51,10 +52,12 @@ class ErgoCubMotorsBus:
             use_right_arm: Whether to enable right arm
             use_neck: Whether to enable neck
             use_bimanual_controller: Whether to use bimanual controller instead of separate arm controllers
+            use_fingers: Whether to enable finger controller
         """
         self.remote_prefix = remote_prefix
         self.local_prefix = local_prefix
         self.use_bimanual_controller = use_bimanual_controller
+        self.use_fingers = use_fingers
         
         # Initialize controllers
         self.controllers = {}
@@ -76,8 +79,9 @@ class ErgoCubMotorsBus:
         if use_neck:
             self.controllers["neck"] = ErgoCubNeckController(remote_prefix, local_prefix)
         
-        # Always add finger controller (fingers are always present)
-        self.controllers["fingers"] = ErgoCubFingerController(local_prefix)
+        # Optionally add finger controller
+        if use_fingers:
+            self.controllers["fingers"] = ErgoCubFingerController(local_prefix)
         
         # Initialize YARP network
         yarp.Network.init()
