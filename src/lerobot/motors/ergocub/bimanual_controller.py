@@ -21,6 +21,7 @@ from typing import Dict
 import numpy as np
 import yarp
 from scipy.spatial.transform import Rotation as R
+from .urdf_utils import resolve_ergocub_urdf
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.model.kinematics import RobotKinematics
 
@@ -59,7 +60,7 @@ class ErgoCubBimanualController:
         # Initialize kinematics solvers for both arms if needed
         self.kinematics_solvers = {}
         if use_left_arm or use_right_arm:
-            urdf_file = yarp.ResourceFinder().findFileByName("model.urdf")
+            urdf_file = resolve_ergocub_urdf()
             
             if use_left_arm:
                 left_joint_names = ["torso_roll", "torso_pitch", "torso_yaw", "l_shoulder_pitch", "l_shoulder_roll", "l_shoulder_yaw", "l_elbow", "l_wrist_yaw", "l_wrist_roll", "l_wrist_pitch"]

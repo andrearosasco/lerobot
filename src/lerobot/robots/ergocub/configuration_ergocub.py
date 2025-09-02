@@ -37,6 +37,8 @@ class ErgoCubConfig(RobotConfig):
     use_neck: bool = True
     # Whether to use bimanual controller instead of separate arm controllers
     use_bimanual_controller: bool = True
+    # Whether to use finger controller (both hands). New flag; default True for backward compatibility.
+    use_fingers: bool = True
     # Legacy field for backward compatibility (not used with new motor bus)
     encoders_control_boards: List[str] = field(
         default_factory=lambda: ["head", "left_arm", "right_arm", "torso"]
