@@ -74,6 +74,9 @@ from typing import Any, Dict
 
 import draccus
 import torch
+import numpy as np
+
+from lerobot.cameras.yarp.configuration_yarp import YarpCameraConfig
 
 # CHANGE: Remove gRPC specific imports; we now rely on GR00T client library.
 try:  # Minimal fallback logic, no defensive branching beyond import resolution.
@@ -93,7 +96,7 @@ from lerobot.robots import (  # noqa: F401
     so101_follower,
 )
 from lerobot.scripts.server.configs import RobotClientConfig
-from lerobot.scripts.server.constants import SUPPORTED_ROBOTS
+from lerobot.scripts.server.constants import SUPPORTED_ROBOTS, DEFAULT_FPS
 from lerobot.scripts.server.helpers import (
     Action,
     FPSTracker,
@@ -109,6 +112,44 @@ from lerobot.scripts.server.helpers import (
 )
 # CHANGE: Remove protobuf / transport utilities (unused after GR00T integration).
 
+from dataclasses import dataclass, field
+from lerobot.robots.ergocub.configuration_ergocub import ErgoCubConfig
+
+
+@dataclass
+class ErgoCubRobotClientConfig(RobotClientConfig):
+    # Explicitly set all RobotClientConfig fields (using same defaults where they exist)
+    policy_type: str = "_"
+    pretrained_name_or_path: str = "_"
+    actions_per_chunk: int = 50
+    task: str = ""
+    server_address: str = "localhost:5555"
+    policy_device: str = "_"
+    chunk_size_threshold: float = 0.5
+    fps: int = DEFAULT_FPS
+    aggregate_fn_name: str = "weighted_average"
+    debug_visualize_queue_size: bool = False
+    verify_robot_cameras: bool = True
+
+    # Explicitly set every field of ErgoCubConfig, including inherited ones.
+    robot: ErgoCubConfig = field(
+        default_factory=lambda: ErgoCubConfig(
+            # Inherited RobotConfig fields
+            id=None,
+            calibration_dir=None,
+            # ErgoCubConfig fields (with their default values)
+            name="ergocub",
+            remote_prefix="/ergocub",
+            local_prefix="/gr00t_client",
+            cameras={"agentview": YarpCameraConfig(yarp_name="depthCamera/rgbImage:o", width=1280, height=720, fps=30)},
+            use_left_arm=True,
+            use_right_arm=True,
+            use_neck=True,
+            use_bimanual_controller=True,
+            encoders_control_boards=["head", "left_arm", "right_arm", "torso"],
+        )
+    )
+
 
 class RobotClient:
     prefix = "robot_client"
@@ -122,10 +163,6 @@ class RobotClient:
 
         # LeRobot feature registry (still needed for action feature ordering / validation)
         self.lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
-
-        if config.verify_robot_cameras:
-            policy_config = PreTrainedConfig.from_pretrained(config.pretrained_name_or_path)
-            validate_robot_cameras_for_policy(self.lerobot_features, policy_config.image_features)
 
         # Parse host:port for GR00T service
         host, port = config.server_address.split(":")
@@ -165,7 +202,9 @@ class RobotClient:
 
     def start(self) -> bool:
         # CHANGE: Fetch modality config from GR00T server & build local binding once.
+        self.logger.info("Connecting to GR00T server: fetching modality config…")
         modality_config = self.policy_client.get_modality_config()
+        self.logger.info("GR00T modality config received")
         self._build_modality_binding(modality_config)
         self.shutdown_event.clear()
         return True
@@ -183,43 +222,93 @@ class RobotClient:
 
     # ------ Modality & translation helpers ------
     def _build_modality_binding(self, modality_config: Dict[str, Any]):
-        # CHANGE: Decide which modality keys to use based on server config (assertive, concise).
-        state_keys = [k for k in modality_config if k.startswith("state.")]
-        video_keys = [k for k in modality_config if k.startswith("video.")]
-        assert state_keys, "No state.* modalities advertised by server."
-        assert video_keys, "No video.* modalities advertised by server."
-        # Heuristic: pick first state key with dim == number of joints if available
-        njoints = len(self.robot.action_features)
-        chosen_state = None
-        for k in state_keys:
-            shape = getattr(modality_config[k], "shape", None)
-            if shape and shape[-1] == njoints:
-                chosen_state = k
-                break
-        if chosen_state is None:
-            chosen_state = state_keys[0]
-        self._state_key = chosen_state
-        self._video_key = video_keys[0]
-        self._modality_binding = {"state": chosen_state, "video": self._video_key}
-        self.logger.info(f"Modality binding: state->{self._state_key}, video->{self._video_key}")
+        # Load modality.json for per-key specs
+        import json
+        import os
+        modality_path = os.path.join(os.path.dirname(__file__), "modality.json")
+        with open(modality_path, "r") as f:
+            modality_specs = json.load(f)
+
+        # Build state and video key mappings
+        self._state_keys = list(modality_specs["state"].keys())
+        self._state_slices = {k: (v["start"], v["end"]) for k, v in modality_specs["state"].items()}
+        self._video_keys = list(modality_specs["video"].keys())
+        self._video_map = {k: v["original_key"] for k, v in modality_specs["video"].items()}
+        self._modality_binding = {"state": self._state_keys, "video": self._video_keys}
+        self.logger.info(f"Modality binding: state keys={self._state_keys}, video keys={self._video_keys}")
 
     def _raw_obs_to_gr00t(self, raw_observation: RawObservation, task: str) -> dict:
-        # CHANGE: Minimal translation raw robot -> GR00T expected dict.
-        assert self._state_key and self._video_key, "Modality binding not initialized."
-        # Joint positions: collect in action_features order (same as observation sensors ordering assumption)
-        joint_vals = []
-        for feat in self.robot.action_features:
-            # Convert '<joint>.pos' -> value
-            joint_vals.append(raw_observation[f"{feat}"] if feat in raw_observation else raw_observation[f"{feat}.pos"])  # noqa: E501
-        state_array = torch.tensor(joint_vals, dtype=torch.float32).unsqueeze(0).numpy()
-        # Camera: take first camera key
-        cam_keys = list(self.robot.cameras.keys())
-        assert cam_keys, "Robot has no cameras configured."
-        image = raw_observation[cam_keys[0]]  # expected (H,W,C) uint8
-        obs = {
-            self._state_key: state_array,
-            self._video_key: image if hasattr(image, "shape") else image,  # pass-through (json-numpy handles)
-        }
+        # Use modality.json specs to build full GR00T obs dict from flat raw keys
+        assert hasattr(self, "_state_keys") and hasattr(self, "_state_slices"), "Modality binding not initialized."
+        obs: dict[str, Any] = {}
+
+        def _get_list(prefix: str, fields: list[str]) -> list[float]:
+            vals: list[float] = []
+            for f in fields:
+                key = f"{prefix}.{f}"
+                vals.append(float(raw_observation.get(key, 0.0)))
+            return vals
+
+        # Build all state keys using naming conventions
+        for k in self._state_keys:
+            if k.endswith("_position"):
+                base_name = k[: -len("_position")]  # preserve underscores (e.g., left_arm)
+                base = f"{base_name}.position"
+                vec = _get_list(base, ["x", "y", "z"])  # 3
+            elif k.endswith("_orientation"):
+                base_name = k[: -len("_orientation")]  # preserve underscores
+                base = f"{base_name}.orientation"
+                vec = _get_list(base, ["qx", "qy", "qz", "qw"])  # 4
+            elif k == "left_hand":
+                vec = _get_list(
+                    "left_fingers",
+                    ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"],
+                )  # 6
+            elif k == "right_hand":
+                vec = _get_list(
+                    "right_fingers",
+                    ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"],
+                )  # 6
+            else:
+                # Fallback: use configured slice size to zero-fill
+                start, end = self._state_slices[k]
+                vec = [0.0] * (end - start)
+            obs[f"state.{k}"] = torch.tensor(vec, dtype=torch.float32).unsqueeze(0).numpy()
+
+        # Build all video keys: prefer mapped original_key; also accept its basename and any configured camera keys
+        for k in self._video_keys:
+            val = None
+            orig = self._video_map.get(k)
+            candidates: list[str] = []
+            if orig:
+                candidates.append(orig)
+                candidates.append(orig.split(".")[-1])  # basename like 'agentview'
+            candidates.extend(list(self.robot.cameras.keys()))
+            for c in candidates:
+                if c in raw_observation:
+                    val = raw_observation[c]
+                    break
+            if val is not None:
+                # Convert to numpy and add leading time/batch dimension if missing
+                if isinstance(val, torch.Tensor):
+                    arr = val.detach().cpu().numpy()
+                else:
+                    try:
+                        arr = np.asarray(val)
+                    except Exception:
+                        arr = val
+                if isinstance(arr, np.ndarray):
+                    if arr.ndim == 2:  # H, W -> 1, H, W, 1
+                        arr = arr[..., None]
+                        arr = arr[None, ...]
+                    elif arr.ndim == 3:  # H, W, C -> 1, H, W, C
+                        arr = arr[None, ...]
+                    # if 4D, assume already (T, H, W, C)
+                    obs[f"video.{k}"] = arr
+                else:
+                    obs[f"video.{k}"] = val
+
+        # Task annotation
         if task:
             obs["annotation.human.action.task_description"] = [task]
         return obs
@@ -450,7 +539,7 @@ class RobotClient:
 
 
 @draccus.wrap()
-def async_client(cfg: RobotClientConfig):
+def async_client(cfg: ErgoCubRobotClientConfig):
     logging.info(pformat(asdict(cfg)))
 
     if cfg.robot.type not in SUPPORTED_ROBOTS:
@@ -458,7 +547,9 @@ def async_client(cfg: RobotClientConfig):
 
     client = RobotClient(cfg)
 
+    client.logger.info("Initializing client: calling start()")
     if client.start():
+        client.logger.info("Client start() returned successfully")
         client.logger.info("Starting inference thread...")
         # CHANGE: Start inference loop thread instead of gRPC action receiver.
         inference_thread = threading.Thread(target=client.inference_loop, daemon=True)
