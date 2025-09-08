@@ -145,17 +145,16 @@ class YarpCamera(Camera):
     in the standard LeRobot camera interface format.
     """
 
-    def __init__(self, config: YarpCameraConfig, local_prefix: str):
+    def __init__(self, config: YarpCameraConfig):
         super().__init__(config)
         self.config = config
 
-        self.local_prefix = local_prefix
         self._is_connected = False
         
         # Create YARP camera interface
         self.interface = CameraInterface(
             remote_prefix=config.remote_prefix,
-            local_prefix=local_prefix,
+            local_prefix=config.local_prefix,
             rgb_shape=(config.width, config.height) if config.use_depth or True else None,
             depth_shape=(config.width, config.height) if config.use_depth else None,
             stream_name=config.yarp_name,

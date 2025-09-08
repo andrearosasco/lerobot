@@ -57,6 +57,9 @@ class YarpCameraConfig(CameraConfig):
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
     remote_prefix: str = ""
+    # Local port prefix for YARP connections (e.g. "/ergocub_dashboard/<session_id>")
+    # When set, the camera will open local ports under this prefix.
+    local_prefix: str = ""
 
     def __post_init__(self):
         if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
