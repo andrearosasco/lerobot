@@ -36,11 +36,8 @@ class ErgoCubMotorsBus:
         self,
         remote_prefix: str,
         local_prefix: str,
-        use_left_arm: bool = True,
-        use_right_arm: bool = True,
-        use_neck: bool = True,
+        control_boards: list[str],
         use_bimanual_controller: bool = False,
-        use_fingers: bool = True,
     ):
         """
         Initialize ErgoCub YARP motors bus.
@@ -57,30 +54,29 @@ class ErgoCubMotorsBus:
         self.remote_prefix = remote_prefix
         self.local_prefix = local_prefix
         self.use_bimanual_controller = use_bimanual_controller
-        self.use_fingers = use_fingers
         
         # Initialize controllers
         self.controllers = {}
         
-        if use_bimanual_controller and (use_left_arm or use_right_arm):
+        if use_bimanual_controller and ('left_arm' in control_boards or 'right_arm' in control_boards):
             # Use single bimanual controller for both arms
             from .bimanual_controller import ErgoCubBimanualController
             self.controllers["bimanual"] = ErgoCubBimanualController(
-                remote_prefix, local_prefix, use_left_arm, use_right_arm
+                remote_prefix, local_prefix, 'left_arm' in control_boards, 'right_arm' in control_boards
             )
         else:
             # Use separate controllers (legacy mode)
-            if use_left_arm:
+            if 'right_arm' in control_boards:
                 self.controllers["left_arm"] = ErgoCubArmController("left", remote_prefix, local_prefix)
                 
-            if use_right_arm:
+            if 'left_arm' in control_boards:
                 self.controllers["right_arm"] = ErgoCubArmController("right", remote_prefix, local_prefix)
             
-        if use_neck:
+        if 'neck' in control_boards:
             self.controllers["neck"] = ErgoCubNeckController(remote_prefix, local_prefix)
         
         # Optionally add finger controller
-        if use_fingers:
+        if 'fingers' in control_boards:
             self.controllers["fingers"] = ErgoCubFingerController(local_prefix)
         
         # Initialize YARP network

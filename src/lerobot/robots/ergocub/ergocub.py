@@ -54,39 +54,32 @@ class ErgoCub(Robot):
         # Initialize finger kinematics using Manipulator class
         self.finger_kinematics = {}
         
-        if config.use_left_arm:
-            left_hand_urdf = "src/lerobot/robots/ergocub/ergocub_hand_left/model.urdf"
-            self.finger_kinematics["left"] = Manipulator(left_hand_urdf)
-        
-        if config.use_right_arm:
-            right_hand_urdf = "src/lerobot/robots/ergocub/ergocub_hand_right/model.urdf"
-            self.finger_kinematics["right"] = Manipulator(right_hand_urdf)
+        left_hand_urdf = "src/lerobot/robots/ergocub/ergocub_hand_left/model.urdf"
+        self.finger_kinematics["left"] = Manipulator(left_hand_urdf)
+    
+        right_hand_urdf = "src/lerobot/robots/ergocub/ergocub_hand_right/model.urdf"
+        self.finger_kinematics["right"] = Manipulator(right_hand_urdf)
 
         yarp.Network.init()
 
-        # Use custom camera creation for YARP cameras with prefixes
-        self.cameras = {}
+        # Create cameras via the standard LeRobot factory. For YARP cameras,
+        # inject a per-session local_prefix into the config so they open ports
+        # under e.g. "/ergocub_dashboard/<session_id>".
+        prepared_camera_configs = {}
         for cam_name, cam_config in config.cameras.items():
-            if cam_config.type == "yarp":
-                from lerobot.cameras.yarp import YarpCamera
-                self.cameras[cam_name] = YarpCamera(
-                    cam_config, 
-                    f"{config.local_prefix}/{self.session_id}"
-                )
-            else:
-                # Use standard LeRobot camera factory for non-YARP cameras
-                other_cameras = make_cameras_from_configs({cam_name: cam_config})
-                self.cameras.update(other_cameras)
+            # Provide a per-session local prefix; harmless for non-YARP configs
+            cam_config.local_prefix = f"{config.local_prefix}/{self.session_id}"
+            prepared_camera_configs[cam_name] = cam_config
+
+        self.cameras = make_cameras_from_configs(prepared_camera_configs)
 
         # Initialize the new ErgoCub motors bus
         self.bus = ErgoCubMotorsBus(
             remote_prefix=config.remote_prefix,
             local_prefix=f"{config.local_prefix}/{self.session_id}",
-            use_left_arm=config.use_left_arm,
-            use_right_arm=config.use_right_arm,
-            use_neck=config.use_neck,
-            use_bimanual_controller=getattr(config, 'use_bimanual_controller', False),
-            use_fingers=getattr(config, 'use_fingers', True),
+            control_boards=config.control_boards,
+            use_bimanual_controller=config.use_bimanual_controller,
+            
         )
 
     def connect(self, calibrate: bool = True):
@@ -158,40 +151,40 @@ class ErgoCub(Robot):
         """Send an action command to the robot."""
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        
-        
+
         # Check for any invalid values that might cause safety checker to fail
         invalid_keys = []
         for key, value in action.items():
-            if value is None or (hasattr(value, '__iter__') and not isinstance(value, (str, bytes))):
+            if value is None or (hasattr(value, "__iter__") and not isinstance(value, (str, bytes))):
                 invalid_keys.append((key, value))
             try:
-                float(value)  # Try to convert to float
+                float(value)
             except (ValueError, TypeError):
                 invalid_keys.append((key, value))
-        
+
         if invalid_keys:
             print(f"🔧 send_action: Found {len(invalid_keys)} invalid action values:")
-            for key, value in invalid_keys[:5]:  # Show first 5
+            for key, value in invalid_keys[:5]:
                 print(f"🔧   {key}: {value} (type: {type(value)})")
-        
+
         # Apply MetaQuest coordinate transforms if enabled
         action = transform_metaquest_to_ergocub(action)
-        # Compute finger joint angles from finger tip positions
-        action = self.compute_finger_joints(action)
-        
+        # Compute finger joint angles from finger tip positions (if fingers enabled)
+        if 'fingers' not in self.config.control_boards:
+            action = self.compute_finger_joints(action)
+
         # Basic safety checks (action must be in robot format by now)
-        arms_to_check = [side for side in ["left", "right"] 
-                        if getattr(self.config, f"use_{side}_arm")]
-        
+        # Determine which arms are active based on configured control boards
+        arms_to_check = [side for side in ["left", "right"] if f"{side}_arm" in self.config.control_boards]
+
         current_state = self.bus.read_state()
-        
+
         if not self.safety_checker.is_valid_action(action, arms_to_check):
             return current_state
-        
+
         if not self.safety_checker.check_hand_position_safety(action, current_state, arms_to_check):
             return current_state
-        
+
         # Send commands via motor bus
         self.bus.send_commands(action)
         return action

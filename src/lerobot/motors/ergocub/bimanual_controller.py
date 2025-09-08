@@ -181,17 +181,17 @@ class ErgoCubBimanualController:
                 pose_matrix = self.kinematics_solvers[side].forward_kinematics(joint_positions)
                 position = pose_matrix[:3, 3]
                 rotation = R.from_matrix(pose_matrix[:3, :3])
-                quaternion = rotation.as_quat(canonical=True)  # [x, y, z, w]
+                quaternion = rotation.as_quat(canonical=True, scalar_first=True)  # [x, y, z, w]
                 
                 # Add to state
                 state.update({
                     f"{side}_arm.position.x": position[0],
                     f"{side}_arm.position.y": position[1],
                     f"{side}_arm.position.z": position[2],
-                    f"{side}_arm.orientation.qx": quaternion[0],
-                    f"{side}_arm.orientation.qy": quaternion[1],
-                    f"{side}_arm.orientation.qz": quaternion[2],
-                    f"{side}_arm.orientation.qw": quaternion[3],
+                    f"{side}_arm.orientation.qw": quaternion[0],
+                    f"{side}_arm.orientation.qx": quaternion[1],
+                    f"{side}_arm.orientation.qy": quaternion[2],
+                    f"{side}_arm.orientation.qz": quaternion[3],
                 })
                 
                 # Add actual finger values from encoders
@@ -201,20 +201,25 @@ class ErgoCubBimanualController:
         
         return state
     
-    def send_command(self, left_pose: np.ndarray = None, left_fingers: np.ndarray = None,
-                    right_pose: np.ndarray = None, right_fingers: np.ndarray = None) -> None:
+    def send_command(self, left_pose: np.ndarray = None, right_pose: np.ndarray = None) -> None:
         """
         Send commands to bimanual controller.
         
         Args:
-            left_pose: Left arm pose [x, y, z, qx, qy, qz, qw] (optional)
+            left_pose: Left arm pose [x, y, z, qw, qx, qy, qz] (optional)
             left_fingers: Left finger commands (optional)
-            right_pose: Right arm pose [x, y, z, qx, qy, qz, qw] (optional)
+            right_pose: Right arm pose [x, y, z, qw, qx, qy, qz] (optional)
             right_fingers: Right finger commands (optional)
         """
         if not self.is_connected:
             raise DeviceNotConnectedError("ErgoCubBimanualController not connected")
         
+        # One-liner: move scalar (qw) from index 3 to the end -> [x,y,z,qx,qy,qz,qw]
+        if left_pose is not None:
+            left_pose[3:7] = np.r_[left_pose[4:7], left_pose[3]]
+        if right_pose is not None:
+            right_pose[3:7] = np.r_[right_pose[4:7], right_pose[3]]
+
         # Send left arm command
         if left_pose is not None and self.use_left_arm:
             left_cmd = yarp.Bottle()
@@ -249,9 +254,10 @@ class ErgoCubBimanualController:
         # Send arm commands
         for arm_name, arm_cmds in [("left", left_arm_cmds), ("right", right_arm_cmds)]:
             if arm_cmds:
-                # Extract pose components - need to handle position.x, orientation.qx format
+                # Extract pose components - position.x, position.y, position.z, orientation qx,qy,qz,qw
                 pos_keys = ["position.x", "position.y", "position.z"]
-                quat_keys = ["orientation.qx", "orientation.qy", "orientation.qz", "orientation.qw"]
+                # Build scalar-first so we can rotate slice with one-liner above
+                quat_keys = ["orientation.qw", "orientation.qx", "orientation.qy", "orientation.qz"]
                 
                 if all(key in arm_cmds for key in pos_keys + quat_keys):
                     pose = np.array([arm_cmds[key] for key in pos_keys + quat_keys])

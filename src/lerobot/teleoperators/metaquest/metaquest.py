@@ -159,12 +159,12 @@ class MetaQuest(Teleoperator):
         rotation_matrix = transform[:3, :3]
         
         # Convert rotation matrix to quaternion (x, y, z, w) using scipy
-        quat = R.from_matrix(rotation_matrix).as_quat(canonical=True)  # [x, y, z, w]
-        qx, qy, qz, qw = quat[0], quat[1], quat[2], quat[3]
+        quat = R.from_matrix(rotation_matrix).as_quat(canonical=True, scalar_first=True)  # [x, y, z, w]
+        qw, qx, qy, qz = quat[0], quat[1], quat[2], quat[3]
         
         return {
             "position": {"x": float(position[0]), "y": float(position[1]), "z": float(position[2])},
-            "orientation": {"qx": float(qx), "qy": float(qy), "qz": float(qz), "qw": float(qw)}
+            "orientation": {"qw": float(qw), "qx": float(qx), "qy": float(qy), "qz": float(qz)}
         }
 
     def _get_hand_pose(self, side: str) -> dict:
@@ -177,12 +177,12 @@ class MetaQuest(Teleoperator):
         rotation_matrix = transform[:3, :3]
         
         # Convert rotation matrix to quaternion (x, y, z, w)
-        quat = R.from_matrix(rotation_matrix).as_quat(canonical=True)  # [x, y, z, w]
-        qx, qy, qz, qw = quat[0], quat[1], quat[2], quat[3]
+        quat = R.from_matrix(rotation_matrix).as_quat(canonical=True, scalar_first=True)  # [x, y, z, w]
+        qw, qx, qy, qz = quat[0], quat[1], quat[2], quat[3]
         
         return {
             "position": {"x": float(position[0]), "y": float(position[1]), "z": float(position[2])},
-            "orientation": {"qx": float(qx), "qy": float(qy), "qz": float(qz), "qw": float(qw)}
+            "orientation": {"qw": float(qw), "qx": float(qx), "qy": float(qy), "qz": float(qz)}
         }
 
     def _get_finger_poses(self, side: str) -> dict:

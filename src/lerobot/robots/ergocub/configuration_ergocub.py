@@ -32,13 +32,12 @@ class ErgoCubConfig(RobotConfig):
     # Configuration for cameras (using standard LeRobot camera interface)
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
     # Enable/disable specific body parts
-    use_left_arm: bool = True
-    use_right_arm: bool = True
-    use_neck: bool = True
+    control_boards: List[str] = field(
+        default_factory=lambda: ["head", "left_arm", "right_arm", "neck", "fingers"]
+    )
     # Whether to use bimanual controller instead of separate arm controllers
     use_bimanual_controller: bool = True
     # Whether to use finger controller (both hands). New flag; default True for backward compatibility.
-    use_fingers: bool = True
     # Legacy field for backward compatibility (not used with new motor bus)
     encoders_control_boards: List[str] = field(
         default_factory=lambda: ["head", "left_arm", "right_arm", "torso"]
