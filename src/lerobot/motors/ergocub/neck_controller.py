@@ -157,9 +157,9 @@ class ErgoCubNeckController:
         # Combine torso + neck joints for kinematics (6 joints total: 3 torso + 3 neck)
         full_joint_values = np.concatenate([torso_values, neck_values[:3]])
         T = self.kinematics_solver.forward_kinematics(full_joint_values.tolist())
-        quaternion = R.from_matrix(T[:3, :3]).as_quat()  # [x, y, z, w]
-        
-        return dict(zip(["neck.orientation.qx", "neck.orientation.qy", "neck.orientation.qz", "neck.orientation.qw"], quaternion))
+        quaternion = R.from_matrix(T[:3, :3]).as_quat(canonical=True, scalar_first=True)  # [x, y, z, w]
+
+        return dict(zip(["neck.orientation.qw", "neck.orientation.qx", "neck.orientation.qy", "neck.orientation.qz"], quaternion))
     
     def send_command(self, orientation: np.ndarray) -> None:
         """
@@ -173,7 +173,7 @@ class ErgoCubNeckController:
         
         # Convert quaternion to rotation matrix (MetaControllServer expects 3x3 matrix)
         q = orientation / np.linalg.norm(orientation)  # Normalize quaternion
-        rot_matrix = R.from_quat(q).as_matrix().reshape(-1)
+        rot_matrix = R.from_quat(q, scalar_first=True).as_matrix().reshape(-1)
         
         # Send RPC command to head controller
         neck_cmd = yarp.Bottle()

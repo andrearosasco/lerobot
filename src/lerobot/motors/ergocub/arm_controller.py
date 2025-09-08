@@ -167,12 +167,12 @@ class ErgoCubArmController:
         full_joint_values = np.concatenate([torso_values, arm_values[:7]])
         T = self.kinematics_solver.forward_kinematics(full_joint_values.tolist())
         position = T[:3, 3]
-        quaternion = R.from_matrix(T[:3, :3]).as_quat()  # [x, y, z, w]
+        quaternion = R.from_matrix(T[:3, :3]).as_quat(canonical=True, scalar_first=True)  # [x, y, z, w]
         pose = np.concatenate([position, quaternion])
         fingers = arm_values[7:13] * 180 / np.pi
         
         # Return state in SO100-like format
-        pose_keys = [f"{self.arm_name}_arm.{k}" for k in ["x", "y", "z", "qx", "qy", "qz", "qw"]]
+        pose_keys = [f"{self.arm_name}_arm.{k}" for k in ["x", "y", "z", "qw", "qx", "qy", "qz"]]
         finger_keys = [f"{self.arm_name}_fingers.{k}" for k in ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]]
         
         return dict(zip(pose_keys + finger_keys, np.concatenate([pose, fingers])))

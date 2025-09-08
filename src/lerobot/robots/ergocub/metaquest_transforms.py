@@ -56,8 +56,8 @@ def transform_metaquest_to_ergocub(action: Dict[str, Any]) -> Dict[str, Any]:
     for side in ['left', 'right']:
         # Check if hand data exists
         pos_keys = [f'{side}_hand.position.x', f'{side}_hand.position.y', f'{side}_hand.position.z']
-        quat_keys = [f'{side}_hand.orientation.qx', f'{side}_hand.orientation.qy', 
-                     f'{side}_hand.orientation.qz', f'{side}_hand.orientation.qw']
+        quat_keys = [f'{side}_hand.orientation.qw', f'{side}_hand.orientation.qx', 
+                     f'{side}_hand.orientation.qy', f'{side}_hand.orientation.qz']
         
         if all(key in action for key in pos_keys + quat_keys):
             # Construct transform matrix from position and quaternion
@@ -66,28 +66,28 @@ def transform_metaquest_to_ergocub(action: Dict[str, Any]) -> Dict[str, Any]:
             
             hand_transform = np.eye(4)
             hand_transform[:3, 3] = pos
-            hand_transform[:3, :3] = R.from_quat(quat).as_matrix()
+            hand_transform[:3, :3] = R.from_quat(quat, scalar_first=True).as_matrix()
             
             adapter = LEFT_HAND_ADAPTER if side == 'left' else RIGHT_HAND_ADAPTER
             T = HEAD_I_ROOTLINK @ RHS_WO_HEAD_I_TRANSF @ hand_transform @ adapter
-            pos, quat = T[:3, 3], R.from_matrix(T[:3, :3]).as_quat()
+            pos, quat = T[:3, 3], R.from_matrix(T[:3, :3]).as_quat(canonical=True, scalar_first=True)
             result.update({
                 f'{side}_arm.position.x': pos[0], f'{side}_arm.position.y': pos[1], f'{side}_arm.position.z': pos[2],
-                f'{side}_arm.orientation.qx': quat[0], f'{side}_arm.orientation.qy': quat[1], 
-                f'{side}_arm.orientation.qz': quat[2], f'{side}_arm.orientation.qw': quat[3]
+                f'{side}_arm.orientation.qw': quat[0], f'{side}_arm.orientation.qx': quat[1], 
+                f'{side}_arm.orientation.qy': quat[2],  f'{side}_arm.orientation.qz': quat[3]
             })
     
     # Transform head
-    head_quat_keys = ['head.orientation.qx', 'head.orientation.qy', 'head.orientation.qz', 'head.orientation.qw']
+    head_quat_keys = ['head.orientation.qw', 'head.orientation.qx', 'head.orientation.qy', 'head.orientation.qz']
     if all(key in action for key in head_quat_keys):
         head_quat = np.array([action[key] for key in head_quat_keys])
         oc_wrt_wo = np.eye(4)
-        oc_wrt_wo[:3, :3] = R.from_quat(head_quat).as_matrix()
+        oc_wrt_wo[:3, :3] = R.from_quat(head_quat, scalar_first=True).as_matrix()
         T = HEAD_I_ROOTLINK @ RHS_WO_HEAD_I_TRANSF @ oc_wrt_wo @ HEAD_ADAPTER
-        quat = R.from_matrix(T[:3, :3]).as_quat()
+        quat = R.from_matrix(T[:3, :3]).as_quat(canonical=True, scalar_first=True)
         result.update({
-            'neck.orientation.qx': quat[0], 'neck.orientation.qy': quat[1], 
-            'neck.orientation.qz': quat[2], 'neck.orientation.qw': quat[3]
+            'neck.orientation.qw': quat[0], 'neck.orientation.qx': quat[1],
+            'neck.orientation.qy': quat[2], 'neck.orientation.qz': quat[3]
         })
     
     # Copy fingers
