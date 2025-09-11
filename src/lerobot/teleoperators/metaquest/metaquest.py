@@ -159,7 +159,7 @@ class MetaQuest(Teleoperator):
         rotation_matrix = transform[:3, :3]
         
         # Convert rotation matrix to quaternion (x, y, z, w) using scipy
-        quat = R.from_matrix(rotation_matrix).as_quat(canonical=True, scalar_first=True)  # [x, y, z, w]
+        quat = R.from_matrix(rotation_matrix).as_quat(canonical=True, scalar_first=True)  # [w, x, y, z]
         qw, qx, qy, qz = quat[0], quat[1], quat[2], quat[3]
         
         return {
@@ -235,28 +235,28 @@ class MetaQuest(Teleoperator):
         action["head.position.x"] = head_pose["position"]["x"]
         action["head.position.y"] = head_pose["position"]["y"] 
         action["head.position.z"] = head_pose["position"]["z"]
+        action["head.orientation.qw"] = head_pose["orientation"]["qw"]
         action["head.orientation.qx"] = head_pose["orientation"]["qx"]
         action["head.orientation.qy"] = head_pose["orientation"]["qy"]
         action["head.orientation.qz"] = head_pose["orientation"]["qz"]
-        action["head.orientation.qw"] = head_pose["orientation"]["qw"]
         
         # Left hand pose
         action["left_hand.position.x"] = left_hand_pose["position"]["x"]
         action["left_hand.position.y"] = left_hand_pose["position"]["y"]
         action["left_hand.position.z"] = left_hand_pose["position"]["z"]
+        action["left_hand.orientation.qw"] = left_hand_pose["orientation"]["qw"]
         action["left_hand.orientation.qx"] = left_hand_pose["orientation"]["qx"]
         action["left_hand.orientation.qy"] = left_hand_pose["orientation"]["qy"]
         action["left_hand.orientation.qz"] = left_hand_pose["orientation"]["qz"]
-        action["left_hand.orientation.qw"] = left_hand_pose["orientation"]["qw"]
         
         # Right hand pose
         action["right_hand.position.x"] = right_hand_pose["position"]["x"]
         action["right_hand.position.y"] = right_hand_pose["position"]["y"]
         action["right_hand.position.z"] = right_hand_pose["position"]["z"]
+        action["right_hand.orientation.qw"] = right_hand_pose["orientation"]["qw"]
         action["right_hand.orientation.qx"] = right_hand_pose["orientation"]["qx"]
         action["right_hand.orientation.qy"] = right_hand_pose["orientation"]["qy"]
         action["right_hand.orientation.qz"] = right_hand_pose["orientation"]["qz"]
-        action["right_hand.orientation.qw"] = right_hand_pose["orientation"]["qw"]
         
         # Left finger poses
         for finger_name in ["thumb", "index", "middle", "ring", "pinky"]:
@@ -284,28 +284,28 @@ class MetaQuest(Teleoperator):
             "head.position.x": float,
             "head.position.y": float, 
             "head.position.z": float,
+            "head.orientation.qw": float,
             "head.orientation.qx": float,
             "head.orientation.qy": float,
             "head.orientation.qz": float,
-            "head.orientation.qw": float,
             
             # Left hand pose
             "left_hand.position.x": float,
             "left_hand.position.y": float,
             "left_hand.position.z": float,
+            "left_hand.orientation.qw": float,
             "left_hand.orientation.qx": float,
             "left_hand.orientation.qy": float,
             "left_hand.orientation.qz": float,
-            "left_hand.orientation.qw": float,
             
             # Right hand pose
             "right_hand.position.x": float,
             "right_hand.position.y": float,
             "right_hand.position.z": float,
+            "right_hand.orientation.qw": float,
             "right_hand.orientation.qx": float,
             "right_hand.orientation.qy": float,
             "right_hand.orientation.qz": float,
-            "right_hand.orientation.qw": float,
             
             # Left finger positions (relative to left hand)
             "left_fingers.thumb.x": float,

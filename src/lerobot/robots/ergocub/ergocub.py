@@ -170,8 +170,7 @@ class ErgoCub(Robot):
         # Apply MetaQuest coordinate transforms if enabled
         action = transform_metaquest_to_ergocub(action)
         # Compute finger joint angles from finger tip positions (if fingers enabled)
-        if 'fingers' not in self.config.control_boards:
-            action = self.compute_finger_joints(action)
+        action = self.compute_finger_joints(action)
 
         # Basic safety checks (action must be in robot format by now)
         # Determine which arms are active based on configured control boards
@@ -188,6 +187,15 @@ class ErgoCub(Robot):
         # Send commands via motor bus
         self.bus.send_commands(action)
         return action
+    
+    def reset(self) -> None:
+        """Reset the robot to a default state."""
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+        
+        # Reset motor bus (arms and neck)
+        self.bus.reset()
+        logger.info("%s has been reset.", self)
 
     def compute_finger_joints(self, action: dict[str, Any]) -> dict[str, Any]:
         """Compute finger joint angles from MetaQuest finger tip positions using Manipulator.
