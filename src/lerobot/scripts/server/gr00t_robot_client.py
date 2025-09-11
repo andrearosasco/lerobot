@@ -142,11 +142,8 @@ class ErgoCubRobotClientConfig(RobotClientConfig):
             remote_prefix="/ergocub",
             local_prefix="/gr00t_client",
             cameras={"agentview": YarpCameraConfig(yarp_name="depthCamera/rgbImage:o", width=1280, height=720, fps=30)},
-            use_left_arm=True,
-            use_right_arm=True,
-            use_neck=True,
-            use_bimanual_controller=True,
             encoders_control_boards=["head", "left_arm", "right_arm", "torso"],
+            use_bimanual_controller=True,
         )
     )
 
@@ -434,8 +431,11 @@ class RobotClient:
             timed_action = self.action_queue.get_nowait()
         get_end = time.perf_counter() - get_start
 
+        action = self._action_tensor_to_action_dict(timed_action.get_action())
+        action['left_arm.orientation.qx'], action['left_arm.orientation.qw'] = action['left_arm.orientation.qw'], action['left_arm.orientation.qx']
+        action['right_arm.orientation.qx'], action['right_arm.orientation.qw'] = action['right_arm.orientation.qw'], action['right_arm.orientation.qx']
         _performed_action = self.robot.send_action(
-            self._action_tensor_to_action_dict(timed_action.get_action())
+            action
         )
         with self.latest_action_lock:
             self.latest_action = timed_action.get_timestep()

@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+import time
 
 import numpy as np
 import yarp
@@ -78,10 +79,17 @@ class ErgoCubMotorsBus:
         # Optionally add finger controller
         if 'fingers' in control_boards:
             self.controllers["fingers"] = ErgoCubFingerController(local_prefix)
-        
-        # Initialize YARP network
-        yarp.Network.init()
-    
+
+        reset_local = f"{self.local_prefix}/reset:o"
+        reset_remote = "/spawn_trigger"
+        self._reset_port = yarp.BufferedPortBottle()
+        self._reset_port.open(reset_local)
+
+        while not yarp.Network.connect(reset_local, reset_remote):
+            logger.warning(f"Failed to connect {reset_local} -> {reset_remote}, retrying...")
+            time.sleep(1)
+        logger.info(f"Connected {reset_local} -> {reset_remote}")
+
     @property
     def is_connected(self) -> bool:
         """Check if all controllers are connected."""
@@ -137,3 +145,15 @@ class ErgoCubMotorsBus:
         for controller in self.controllers.values():
             features.update(controller.motor_features)
         return features
+
+    # ---------------------------------------------------------------------
+    # Reset handling
+    # ---------------------------------------------------------------------
+    def reset(self) -> None:
+        bottle = self._reset_port.prepare()
+        bottle.clear()
+        bottle.addInt32(1)
+        self._reset_port.write()
+        self.controllers['bimanual'].reset()
+        self.controllers['neck'].reset()
+        time.sleep(5)  # Allow some time for reset to take effect

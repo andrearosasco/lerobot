@@ -157,7 +157,7 @@ class ErgoCubNeckController:
         # Combine torso + neck joints for kinematics (6 joints total: 3 torso + 3 neck)
         full_joint_values = np.concatenate([torso_values, neck_values[:3]])
         T = self.kinematics_solver.forward_kinematics(full_joint_values.tolist())
-        quaternion = R.from_matrix(T[:3, :3]).as_quat(canonical=True, scalar_first=True)  # [x, y, z, w]
+        quaternion = R.from_matrix(T[:3, :3]).as_quat(canonical=True, scalar_first=True)  # [w, x, y, z]
 
         return dict(zip(["neck.orientation.qw", "neck.orientation.qx", "neck.orientation.qy", "neck.orientation.qz"], quaternion))
     
@@ -166,14 +166,13 @@ class ErgoCubNeckController:
         Send orientation command to the neck.
         
         Args:
-            orientation: Array [qx, qy, qz, qw] for neck orientation
+            orientation: Array [qw, qx, qy, qz] for neck orientation
         """
         if not self.is_connected:
             raise DeviceNotConnectedError("ErgoCubNeckController not connected")
         
         # Convert quaternion to rotation matrix (MetaControllServer expects 3x3 matrix)
-        q = orientation / np.linalg.norm(orientation)  # Normalize quaternion
-        rot_matrix = R.from_quat(q, scalar_first=True).as_matrix().reshape(-1)
+        rot_matrix = R.from_quat(orientation, scalar_first=True).as_matrix().reshape(-1)
         
         # Send RPC command to head controller
         neck_cmd = yarp.Bottle()
@@ -189,10 +188,18 @@ class ErgoCubNeckController:
     def send_commands(self, commands: dict[str, float]) -> None:
         """Send commands from dict format."""
         # Extract neck orientation if available
-        quat_keys = ["neck.orientation.qx", "neck.orientation.qy", "neck.orientation.qz", "neck.orientation.qw"]
+        quat_keys = ["neck.orientation.qw", "neck.orientation.qx", "neck.orientation.qy", "neck.orientation.qz"]
         if all(key in commands for key in quat_keys):
             orientation = np.array([commands[key] for key in quat_keys])
             self.send_command(orientation)
+
+    def reset(self) -> None:
+        """Reset the bimanual controller"""
+        right_cmd = yarp.Bottle()
+        right_cmd.addString("goHome")
+        
+        reply = yarp.Bottle()
+        self.neck_cmd_port.write(right_cmd, reply)
 
     @property
     def motor_features(self) -> dict[str, type]:
@@ -200,7 +207,7 @@ class ErgoCubNeckController:
         features = {}
         
         # Neck orientation (4 DOF)
-        for coord in ["qx", "qy", "qz", "qw"]:
+        for coord in ["qw", "qx", "qy", "qz"]:
             features[f"neck.orientation.{coord}"] = float
         
         return features

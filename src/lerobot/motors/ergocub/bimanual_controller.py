@@ -214,7 +214,7 @@ class ErgoCubBimanualController:
         if not self.is_connected:
             raise DeviceNotConnectedError("ErgoCubBimanualController not connected")
         
-        # One-liner: move scalar (qw) from index 3 to the end -> [x,y,z,qx,qy,qz,qw]
+        # One-liner: move scalar (qw) from index 3 to the end -> [x,y,z,qw,qx,qy,qz]
         if left_pose is not None:
             left_pose[3:7] = np.r_[left_pose[4:7], left_pose[3]]
         if right_pose is not None:
@@ -254,7 +254,7 @@ class ErgoCubBimanualController:
         # Send arm commands
         for arm_name, arm_cmds in [("left", left_arm_cmds), ("right", right_arm_cmds)]:
             if arm_cmds:
-                # Extract pose components - position.x, position.y, position.z, orientation qx,qy,qz,qw
+                # Extract pose components - position.x, position.y, position.z, orientation qw,qx,qy,qz
                 pos_keys = ["position.x", "position.y", "position.z"]
                 # Build scalar-first so we can rotate slice with one-liner above
                 quat_keys = ["orientation.qw", "orientation.qx", "orientation.qy", "orientation.qz"]
@@ -273,7 +273,15 @@ class ErgoCubBimanualController:
             # For now, just log that finger commands were received but not processed
             if finger_cmds:
                 logger.debug(f"Received {side} finger commands: {finger_cmds} (not processed by bimanual controller)")
-    
+
+    def reset(self) -> None:
+        """Reset the bimanual controller"""
+        right_cmd = yarp.Bottle()
+        right_cmd.addString("go_home")
+        
+        reply = yarp.Bottle()
+        self.bimanual_cmd_port.write(right_cmd, reply)
+
     @property
     def motor_features(self) -> dict[str, type]:
         """Get motor features for bimanual controller."""
@@ -283,14 +291,14 @@ class ErgoCubBimanualController:
         if self.use_left_arm:
             for coord in ["x", "y", "z"]:
                 features[f"left_arm.position.{coord}"] = float
-            for coord in ["qx", "qy", "qz", "qw"]:
+            for coord in ["qw", "qx", "qy", "qz"]:
                 features[f"left_arm.orientation.{coord}"] = float
         
         # Right arm
         if self.use_right_arm:
             for coord in ["x", "y", "z"]:
                 features[f"right_arm.position.{coord}"] = float
-            for coord in ["qx", "qy", "qz", "qw"]:
+            for coord in ["qw", "qx", "qy", "qz"]:
                 features[f"right_arm.orientation.{coord}"] = float
         
         return features
