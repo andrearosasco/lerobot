@@ -69,5 +69,9 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .metaquest import MetaQuest
 
         return MetaQuest(config)
+    elif config.type == "reachy2_teleoperator":
+        from .reachy2_teleoperator import Reachy2Teleoperator
+
+        return Reachy2Teleoperator(config)
     else:
         raise ValueError(config.type)
