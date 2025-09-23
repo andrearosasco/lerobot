@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ErgoCubNeckController:
+class ErgoCubHeadController:
     """
     Controller for ergoCub neck that handles orientation commands and readings.
     Follows SO100 motor conventions but operates at orientation level.

@@ -125,7 +125,7 @@ class ErgoCubRobotClientConfig(RobotClientConfig):
     task: str = ""
     server_address: str = "localhost:5555"
     policy_device: str = "_"
-    chunk_size_threshold: float = 0.5
+    chunk_size_threshold: float = 1
     fps: int = DEFAULT_FPS
     aggregate_fn_name: str = "weighted_average"
     debug_visualize_queue_size: bool = False
@@ -139,10 +139,9 @@ class ErgoCubRobotClientConfig(RobotClientConfig):
             calibration_dir=None,
             # ErgoCubConfig fields (with their default values)
             name="ergocub",
-            remote_prefix="/ergocub",
+            remote_prefix="/ergocubSim",
             local_prefix="/gr00t_client",
-            cameras={"agentview": YarpCameraConfig(yarp_name="depthCamera/rgbImage:o", width=1280, height=720, fps=30)},
-            encoders_control_boards=["head", "left_arm", "right_arm", "torso"],
+            cameras={"agentview": YarpCameraConfig(yarp_name="ergocubSim/depthCamera/rgbImage:o", width=640, height=480, fps=30)},
             use_bimanual_controller=True,
         )
     )

@@ -15,5 +15,5 @@
 # limitations under the License.
 
 from .arm_controller import ErgoCubArmController
-from .neck_controller import ErgoCubNeckController
+from .head_controller import ErgoCubHeadController
 from .ergocub_motors_bus import ErgoCubMotorsBus

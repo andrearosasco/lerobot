@@ -69,6 +69,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .metaquest import MetaQuest
 
         return MetaQuest(config)
+    elif config.type == "bimanualkeyboard":
+        from .metaquest import BimanualKeyboard
+
+        return BimanualKeyboard(config)
     elif config.type == "reachy2_teleoperator":
         from .reachy2_teleoperator import Reachy2Teleoperator
 

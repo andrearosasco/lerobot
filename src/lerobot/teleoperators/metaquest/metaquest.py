@@ -22,9 +22,37 @@ import numpy as np
 import yarp
 from lerobot.errors import DeviceNotConnectedError
 from lerobot.teleoperators.teleoperator import Teleoperator
+from lerobot.robots.ergocub.metaquest_transforms import HEAD_I_ROOTLINK, transform_metaquest_to_ergocub
 
 from .configuration_metaquest import MetaQuestConfig
 from scipy.spatial.transform import Rotation as R
+
+HEAD_TO_ROOT = np.array([
+    [1.0, 0.0, 0.0, 0.005],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.547],
+    [0.0, 0.0, 0.0, 1.0]
+])
+RHS_WO_HEAD_I_TRANSF = np.array([
+    [0.0, 0.0, -1.0, 0.0],
+    [-1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0]
+])
+HEAD_ADAPTER = np.array([
+    [0.0, -1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [-1.0, 0.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0]
+])
+RIGHT_HAND_ADAPTER = np.array([
+    [-1.0, 0.0, 0.0, 0.0],
+    [0.0, -1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0]
+])
+LEFT_HAND_ADAPTER = np.eye(4)
+QUEST_TO_ECUB = HEAD_I_ROOTLINK @ RHS_WO_HEAD_I_TRANSF
 
 
 class MetaQuest(Teleoperator):
@@ -154,60 +182,45 @@ class MetaQuest(Teleoperator):
         """Get raw head pose from MetaQuest."""
         transform = self._get_transform("openxr_head")
         
-        # Extract position and rotation from 4x4 transformation matrix
         position = transform[:3, 3]
         rotation_matrix = transform[:3, :3]
+
+        rotation_matrix =np.pad(rotation_matrix, (0, 1)) + np.diag([0, 0, 0, 1])
+        rotation_matrix = (QUEST_TO_ECUB @ rotation_matrix @ HEAD_ADAPTER)[:3, :3]
         
-        # Convert rotation matrix to quaternion (x, y, z, w) using scipy
         quat = R.from_matrix(rotation_matrix).as_quat(canonical=True, scalar_first=True)  # [w, x, y, z]
-        qw, qx, qy, qz = quat[0], quat[1], quat[2], quat[3]
         
-        return {
-            "position": {"x": float(position[0]), "y": float(position[1]), "z": float(position[2])},
-            "orientation": {"qw": float(qw), "qx": float(qx), "qy": float(qy), "qz": float(qz)}
-        }
+        return np.r_[position, quat]
+
 
     def _get_hand_pose(self, side: str) -> dict:
         """Get raw hand pose from MetaQuest."""
         frame_name = f"openxr_{side}_hand"
         transform = self._get_transform(frame_name)
         
-        # Extract position and rotation from 4x4 transformation matrix
         position = transform[:3, 3]
         rotation_matrix = transform[:3, :3]
+
+        HAND_ADAPTER = LEFT_HAND_ADAPTER if side == "left" else RIGHT_HAND_ADAPTER
+        rotation_matrix =np.pad(rotation_matrix, (0, 1)) + np.diag([0, 0, 0, 1])
+        rotation_matrix = (QUEST_TO_ECUB @ rotation_matrix @ HAND_ADAPTER)[:3, :3]
+
+        quat = R.from_matrix(rotation_matrix).as_quat(canonical=True, scalar_first=True)  # [w, x, y z]
         
-        # Convert rotation matrix to quaternion (x, y, z, w)
-        quat = R.from_matrix(rotation_matrix).as_quat(canonical=True, scalar_first=True)  # [x, y, z, w]
-        qw, qx, qy, qz = quat[0], quat[1], quat[2], quat[3]
-        
-        return {
-            "position": {"x": float(position[0]), "y": float(position[1]), "z": float(position[2])},
-            "orientation": {"qw": float(qw), "qx": float(qx), "qy": float(qy), "qz": float(qz)}
-        }
+        return np.r_[position, quat]
 
     def _get_finger_poses(self, side: str) -> dict:
         """Get raw finger poses from MetaQuest relative to hand frame."""
-        finger_poses = {}
-        
         hand_frame = f"openxr_{side}_hand_finger_0"  # Reference frame (hand)
         
-        for finger_name, finger_index in self.finger_index_pairs:
+        for _, finger_index in self.finger_index_pairs:
             finger_frame = f"openxr_{side}_hand_finger_{finger_index}"
             transform = self._get_transform(finger_frame, hand_frame)
             
             # Extract position from transformation matrix
             position = transform[:3, 3]
             
-            # Clean up finger name (remove _tip suffix for consistency)
-            clean_name = finger_name.replace("_tip", "")
-            
-            finger_poses[clean_name] = {
-                "x": float(position[0]),
-                "y": float(position[1]), 
-                "z": float(position[2])
-            }
-        
-        return finger_poses
+        return position
 
     def get_action(self) -> dict[str, Any]:
         """
@@ -229,47 +242,9 @@ class MetaQuest(Teleoperator):
         right_finger_poses = self._get_finger_poses("right")
         
         # Build flattened action dictionary that matches action_features
-        action = {}
-        
-        # Head pose
-        action["head.position.x"] = head_pose["position"]["x"]
-        action["head.position.y"] = head_pose["position"]["y"] 
-        action["head.position.z"] = head_pose["position"]["z"]
-        action["head.orientation.qw"] = head_pose["orientation"]["qw"]
-        action["head.orientation.qx"] = head_pose["orientation"]["qx"]
-        action["head.orientation.qy"] = head_pose["orientation"]["qy"]
-        action["head.orientation.qz"] = head_pose["orientation"]["qz"]
-        
-        # Left hand pose
-        action["left_hand.position.x"] = left_hand_pose["position"]["x"]
-        action["left_hand.position.y"] = left_hand_pose["position"]["y"]
-        action["left_hand.position.z"] = left_hand_pose["position"]["z"]
-        action["left_hand.orientation.qw"] = left_hand_pose["orientation"]["qw"]
-        action["left_hand.orientation.qx"] = left_hand_pose["orientation"]["qx"]
-        action["left_hand.orientation.qy"] = left_hand_pose["orientation"]["qy"]
-        action["left_hand.orientation.qz"] = left_hand_pose["orientation"]["qz"]
-        
-        # Right hand pose
-        action["right_hand.position.x"] = right_hand_pose["position"]["x"]
-        action["right_hand.position.y"] = right_hand_pose["position"]["y"]
-        action["right_hand.position.z"] = right_hand_pose["position"]["z"]
-        action["right_hand.orientation.qw"] = right_hand_pose["orientation"]["qw"]
-        action["right_hand.orientation.qx"] = right_hand_pose["orientation"]["qx"]
-        action["right_hand.orientation.qy"] = right_hand_pose["orientation"]["qy"]
-        action["right_hand.orientation.qz"] = right_hand_pose["orientation"]["qz"]
-        
-        # Left finger poses
-        for finger_name in ["thumb", "index", "middle", "ring", "pinky"]:
-
-            action[f"left_fingers.{finger_name}.x"] = left_finger_poses[finger_name]["x"]
-            action[f"left_fingers.{finger_name}.y"] = left_finger_poses[finger_name]["y"]
-            action[f"left_fingers.{finger_name}.z"] = left_finger_poses[finger_name]["z"]
-
-            action[f"right_fingers.{finger_name}.x"] = right_finger_poses[finger_name]["x"]
-            action[f"right_fingers.{finger_name}.y"] = right_finger_poses[finger_name]["y"]
-            action[f"right_fingers.{finger_name}.z"] = right_finger_poses[finger_name]["z"]
-                
-        
+        keys = list(self.action_features.keys())
+        vals = np.concatenate([head_pose, left_hand_pose, right_hand_pose, left_finger_poses, right_finger_poses])
+        action = dict(zip(keys, vals.tolist()))
         return action
 
 

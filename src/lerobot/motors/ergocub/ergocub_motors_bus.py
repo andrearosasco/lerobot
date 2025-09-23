@@ -21,16 +21,16 @@ import numpy as np
 import yarp
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
-from .arm_controller import ErgoCubArmController
-from .neck_controller import ErgoCubNeckController
+from .head_controller import ErgoCubHeadController
 from .finger_controller import ErgoCubFingerController
+from .bimanual_controller import ErgoCubBimanualController
 
 logger = logging.getLogger(__name__)
 
 
 class ErgoCubMotorsBus:
     """
-    YARP-based motors bus for ErgoCub that manages arm and neck controllers.
+    YARP-based motors bus for ErgoCub that manages bimanual and head controllers.
     """
     
     def __init__(
@@ -38,7 +38,6 @@ class ErgoCubMotorsBus:
         remote_prefix: str,
         local_prefix: str,
         control_boards: list[str],
-        use_bimanual_controller: bool = False,
     ):
         """
         Initialize ErgoCub YARP motors bus.
@@ -46,35 +45,20 @@ class ErgoCubMotorsBus:
         Args:
             remote_prefix: Remote YARP prefix (e.g., "/ergocubSim")
             local_prefix: Local YARP prefix (e.g., "/lerobot/session_id")
-            use_left_arm: Whether to enable left arm
-            use_right_arm: Whether to enable right arm
-            use_neck: Whether to enable neck
-            use_bimanual_controller: Whether to use bimanual controller instead of separate arm controllers
-            use_fingers: Whether to enable finger controller
+            control_boards: List of control boards to manage (e.g., ["left_hand", "right_hand", "head", "fingers"])
         """
         self.remote_prefix = remote_prefix
         self.local_prefix = local_prefix
-        self.use_bimanual_controller = use_bimanual_controller
         
         # Initialize controllers
         self.controllers = {}
         
-        if use_bimanual_controller and ('left_arm' in control_boards or 'right_arm' in control_boards):
-            # Use single bimanual controller for both arms
-            from .bimanual_controller import ErgoCubBimanualController
-            self.controllers["bimanual"] = ErgoCubBimanualController(
-                remote_prefix, local_prefix, 'left_arm' in control_boards, 'right_arm' in control_boards
-            )
-        else:
-            # Use separate controllers (legacy mode)
-            if 'right_arm' in control_boards:
-                self.controllers["left_arm"] = ErgoCubArmController("left", remote_prefix, local_prefix)
-                
-            if 'left_arm' in control_boards:
-                self.controllers["right_arm"] = ErgoCubArmController("right", remote_prefix, local_prefix)
+        self.controllers["bimanual"] = ErgoCubBimanualController(
+            remote_prefix, local_prefix, 'left_hand' in control_boards, 'right_hand' in control_boards
+        )
             
-        if 'neck' in control_boards:
-            self.controllers["neck"] = ErgoCubNeckController(remote_prefix, local_prefix)
+        if 'head' in control_boards:
+            self.controllers["head"] = ErgoCubHeadController(remote_prefix, local_prefix)
         
         # Optionally add finger controller
         if 'fingers' in control_boards:
@@ -155,5 +139,5 @@ class ErgoCubMotorsBus:
         bottle.addInt32(1)
         self._reset_port.write()
         self.controllers['bimanual'].reset()
-        self.controllers['neck'].reset()
+        self.controllers['head'].reset()
         time.sleep(5)  # Allow some time for reset to take effect

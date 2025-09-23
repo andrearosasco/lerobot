@@ -15,4 +15,6 @@
 # limitations under the License.
 
 from .configuration_metaquest import MetaQuestConfig
+from .configuration_metaquest_keyboard import BimanualKeyboardConfig
 from .metaquest import MetaQuest
+from .metaquest_keyboard import BimanualKeyboard
