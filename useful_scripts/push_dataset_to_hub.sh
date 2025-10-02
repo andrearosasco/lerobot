@@ -1,0 +1,1 @@
+huggingface-cli upload --repo-type=dataset steb6/test_teleop /home/ergocub/.cache/huggingface/lerobot/datasets/steb6/test_teleop
