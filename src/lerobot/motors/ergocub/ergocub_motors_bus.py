@@ -55,9 +55,11 @@ class ErgoCubMotorsBus:
         self.remote_prefix = remote_prefix
         self.local_prefix = local_prefix
         self.use_bimanual_controller = use_bimanual_controller
+        self.control_boards = control_boards
         
         # Initialize controllers
         self.controllers = {}
+        self.active_finger_boards = []
         
         if use_bimanual_controller and ('left_arm' in control_boards or 'right_arm' in control_boards):
             # Use single bimanual controller for both arms
@@ -76,9 +78,18 @@ class ErgoCubMotorsBus:
         if 'neck' in control_boards:
             self.controllers["neck"] = ErgoCubNeckController(remote_prefix, local_prefix)
         
-        # Optionally add finger controller
-        if 'fingers' in control_boards:
+        # Add finger controller if any finger boards are specified
+        if 'left_fingers' in control_boards or 'right_fingers' in control_boards:
+            # New separate finger control
             self.controllers["fingers"] = ErgoCubFingerController(local_prefix)
+            self.active_finger_boards = []
+            if 'left_fingers' in control_boards:
+                self.active_finger_boards.append("left_fingers")
+            if 'right_fingers' in control_boards:
+                self.active_finger_boards.append("right_fingers")
+        else:
+            # No finger controller needed
+            self.active_finger_boards = []
 
         reset_local = f"{self.local_prefix}/reset:o"
         reset_remote = "/spawn_trigger"
@@ -102,7 +113,11 @@ class ErgoCubMotorsBus:
         
         for name, controller in self.controllers.items():
             logger.info(f"Connecting {name} controller...")
-            controller.connect()
+            if name == "fingers":
+                # Pass active finger boards to finger controller
+                controller.connect(getattr(self, 'active_finger_boards', []))
+            else:
+                controller.connect()
         
         logger.info("ErgoCubMotorsBus connected")
     
@@ -124,8 +139,12 @@ class ErgoCubMotorsBus:
             raise DeviceNotConnectedError("ErgoCubMotorsBus not connected")
         
         state = {}
-        for controller in self.controllers.values():
-            controller_state = controller.read_current_state()
+        for name, controller in self.controllers.items():
+            if name == "fingers":
+                # Pass active finger boards to finger controller
+                controller_state = controller.read_current_state(getattr(self, 'active_finger_boards', []))
+            else:
+                controller_state = controller.read_current_state()
             state.update(controller_state)
         
         return state
@@ -135,15 +154,23 @@ class ErgoCubMotorsBus:
         if not self.is_connected:
             raise DeviceNotConnectedError("ErgoCubMotorsBus not connected")
         
-        for controller in self.controllers.values():
-            controller.send_commands(commands)
+        for name, controller in self.controllers.items():
+            if name == "fingers":
+                # Pass active finger boards to finger controller
+                controller.send_commands(commands, getattr(self, 'active_finger_boards', []))
+            else:
+                controller.send_commands(commands)
 
     @property
     def motor_features(self) -> dict[str, type]:
         """Get motor features by aggregating from all controllers."""
         features = {}
-        for controller in self.controllers.values():
-            features.update(controller.motor_features)
+        for name, controller in self.controllers.items():
+            if name == "fingers":
+                # Get finger features based on active boards
+                features.update(controller.get_motor_features(getattr(self, 'active_finger_boards', [])))
+            else:
+                features.update(controller.motor_features)
         return features
 
     # ---------------------------------------------------------------------
@@ -154,6 +181,10 @@ class ErgoCubMotorsBus:
         bottle.clear()
         bottle.addInt32(1)
         self._reset_port.write()
-        self.controllers['bimanual'].reset()
-        self.controllers['neck'].reset()
+        if 'bimanual' in self.controllers:
+            self.controllers['bimanual'].reset()
+        if 'neck' in self.controllers:
+            self.controllers['neck'].reset()
+        if 'fingers' in self.controllers:
+            self.controllers['fingers'].reset(getattr(self, 'active_finger_boards', []))
         time.sleep(5)  # Allow some time for reset to take effect
