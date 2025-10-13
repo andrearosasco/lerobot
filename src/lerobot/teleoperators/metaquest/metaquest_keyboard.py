@@ -4,7 +4,7 @@
 
 from typing import Any
 
-from lerobot.errors import DeviceNotConnectedError
+from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.utils.control_utils import is_headless
 

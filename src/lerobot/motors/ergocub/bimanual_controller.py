@@ -22,7 +22,7 @@ import numpy as np
 import yarp
 from scipy.spatial.transform import Rotation as R
 from .urdf_utils import resolve_ergocub_urdf
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.model.kinematics import RobotKinematics
 
 logger = logging.getLogger(__name__)
@@ -30,24 +30,24 @@ logger = logging.getLogger(__name__)
 
 class ErgoCubBimanualController:
     """
-    Bimanual controller for ergoCub that controls both arms through a single port.
-    Uses /mc-ergocub-cartesian-bimanual/rpc:i with arm side specified as string parameter.
+    Bimanual controller for ergoCub that controls both hands through a single port.
+    Uses /mc-ergocub-cartesian-bimanual/rpc:i with hand side specified as string parameter.
     """
     
-    def __init__(self, remote_prefix: str, local_prefix: str, use_left_arm: bool = True, use_right_arm: bool = True):
+    def __init__(self, remote_prefix: str, local_prefix: str, use_left_hand: bool = True, use_right_hand: bool = True):
         """
         Initialize bimanual controller.
         
         Args:
             remote_prefix: Remote YARP prefix (e.g., "/ergocubSim")
             local_prefix: Local YARP prefix (e.g., "/lerobot/session_id")
-            use_left_arm: Whether to control left arm
-            use_right_arm: Whether to control right arm
+            use_left_hand: Whether to control left hand
+            use_right_hand: Whether to control right hand
         """
         self.remote_prefix = remote_prefix
         self.local_prefix = local_prefix
-        self.use_left_arm = use_left_arm
-        self.use_right_arm = use_right_arm
+        self.use_left_hand = use_left_hand
+        self.use_right_hand = use_right_hand
         
         # YARP ports
         self.bimanual_cmd_port = yarp.RpcClient()
@@ -57,16 +57,16 @@ class ErgoCubBimanualController:
         
         self._is_connected = False
         
-        # Initialize kinematics solvers for both arms if needed
+        # Initialize kinematics solvers for both hands if needed
         self.kinematics_solvers = {}
-        if use_left_arm or use_right_arm:
+        if use_left_hand or use_right_hand:
             urdf_file = resolve_ergocub_urdf()
             
-            if use_left_arm:
+            if use_left_hand:
                 left_joint_names = ["torso_roll", "torso_pitch", "torso_yaw", "l_shoulder_pitch", "l_shoulder_roll", "l_shoulder_yaw", "l_elbow", "l_wrist_yaw", "l_wrist_roll", "l_wrist_pitch"]
                 self.kinematics_solvers["left"] = RobotKinematics(urdf_file, "l_hand_palm", left_joint_names)
                 
-            if use_right_arm:
+            if use_right_hand:
                 right_joint_names = ["torso_roll", "torso_pitch", "torso_yaw", "r_shoulder_pitch", "r_shoulder_roll", "r_shoulder_yaw", "r_elbow", "r_wrist_yaw", "r_wrist_roll", "r_wrist_pitch"]
                 self.kinematics_solvers["right"] = RobotKinematics(urdf_file, "r_hand_palm", right_joint_names)
     
@@ -90,8 +90,8 @@ class ErgoCubBimanualController:
             logger.warning(f"Failed to connect {bimanual_cmd_local} -> {bimanual_cmd_remote}, retrying...")
             time.sleep(1)
         
-        # Connect encoder ports for both arms
-        if self.use_left_arm:
+        # Connect encoder ports for both hands
+        if self.use_left_hand:
             left_encoders_local = f"{self.local_prefix}/bimanual/left_encoders:i"
             if not self.left_encoders_port.open(left_encoders_local):
                 raise ConnectionError(f"Failed to open left encoders port {left_encoders_local}")
@@ -101,7 +101,7 @@ class ErgoCubBimanualController:
                 logger.warning(f"Failed to connect {left_encoders_remote} -> {left_encoders_local}, retrying...")
                 time.sleep(1)
         
-        if self.use_right_arm:
+        if self.use_right_hand:
             right_encoders_local = f"{self.local_prefix}/bimanual/right_encoders:i"
             if not self.right_encoders_port.open(right_encoders_local):
                 raise ConnectionError(f"Failed to open right encoders port {right_encoders_local}")
@@ -130,9 +130,9 @@ class ErgoCubBimanualController:
             raise DeviceNotConnectedError("ErgoCubBimanualController not connected")
         
         self.bimanual_cmd_port.close()
-        if self.use_left_arm:
+        if self.use_left_hand:
             self.left_encoders_port.close()
-        if self.use_right_arm:
+        if self.use_right_hand:
             self.right_encoders_port.close()
         self.torso_encoders_port.close()
         
@@ -140,7 +140,7 @@ class ErgoCubBimanualController:
         logger.info("ErgoCubBimanualController disconnected")
     
     def read_current_state(self) -> Dict[str, float]:
-        """Read current state for both arms."""
+        """Read current state for both hands."""
         if not self.is_connected:
             raise DeviceNotConnectedError("ErgoCubBimanualController not connected")
         
@@ -153,28 +153,28 @@ class ErgoCubBimanualController:
         else:
             torso_encoders = [0.0, 0.0, 0.0]
         
-        # Read and compute poses for each arm
+        # Read and compute poses for each hand
         for side in ["left", "right"]:
-            if (side == "left" and not self.use_left_arm) or (side == "right" and not self.use_right_arm):
+            if (side == "left" and not self.use_left_hand) or (side == "right" and not self.use_right_hand):
                 continue
                 
-            # Read arm encoders with busy wait
+            # Read hand encoders with busy wait
             encoders_port = self.left_encoders_port if side == "left" else self.right_encoders_port
             read_attempts = 0
-            while (arm_bottle := encoders_port.read(False)) is None:
+            while (hand_bottle := encoders_port.read(False)) is None:
                 read_attempts += 1
                 if read_attempts % 1000 == 0:  # Warning every 1000 attempts
-                    logger.warning(f"Still waiting for {side} arm encoder data (attempt {read_attempts})")
+                    logger.warning(f"Still waiting for {side} hand encoder data (attempt {read_attempts})")
                 time.sleep(0.001)  # 1 millisecond sleep
             
-            # Read all available encoders (arm + fingers)
-            all_encoders = [arm_bottle.get(i).asFloat64() for i in range(arm_bottle.size())]
-            # First 7 are arm joints, last 6 are finger joints
-            arm_encoders = all_encoders[:7] if len(all_encoders) >= 7 else [0.0] * 7
+            # Read all available encoders (hand + fingers)
+            all_encoders = [hand_bottle.get(i).asFloat64() for i in range(hand_bottle.size())]
+            # First 7 are hand joints, last 6 are finger joints
+            hand_encoders = all_encoders[:7] if len(all_encoders) >= 7 else [0.0] * 7
             finger_encoders = all_encoders[7:13] if len(all_encoders) >= 13 else [0.0] * 6
             
-            # Combine torso + arm encoders
-            joint_positions = np.array(torso_encoders + arm_encoders)
+            # Combine torso + hand encoders
+            joint_positions = np.array(torso_encoders + hand_encoders)
             
             # Compute forward kinematics
             if side in self.kinematics_solvers:
@@ -185,13 +185,13 @@ class ErgoCubBimanualController:
                 
                 # Add to state
                 state.update({
-                    f"{side}_arm.position.x": position[0],
-                    f"{side}_arm.position.y": position[1],
-                    f"{side}_arm.position.z": position[2],
-                    f"{side}_arm.orientation.qw": quaternion[0],
-                    f"{side}_arm.orientation.qx": quaternion[1],
-                    f"{side}_arm.orientation.qy": quaternion[2],
-                    f"{side}_arm.orientation.qz": quaternion[3],
+                    f"{side}_hand.position.x": position[0].item(),
+                    f"{side}_hand.position.y": position[1].item(),
+                    f"{side}_hand.position.z": position[2].item(),
+                    f"{side}_hand.orientation.qw": quaternion[0].item(),
+                    f"{side}_hand.orientation.qx": quaternion[1].item(),
+                    f"{side}_hand.orientation.qy": quaternion[2].item(),
+                    f"{side}_hand.orientation.qz": quaternion[3].item(),
                 })
                 
                 # Add actual finger values from encoders
@@ -206,9 +206,9 @@ class ErgoCubBimanualController:
         Send commands to bimanual controller.
         
         Args:
-            left_pose: Left arm pose [x, y, z, qw, qx, qy, qz] (optional)
+            left_pose: Left hand pose [x, y, z, qw, qx, qy, qz] (optional)
             left_fingers: Left finger commands (optional)
-            right_pose: Right arm pose [x, y, z, qw, qx, qy, qz] (optional)
+            right_pose: Right hand pose [x, y, z, qw, qx, qy, qz] (optional)
             right_fingers: Right finger commands (optional)
         """
         if not self.is_connected:
@@ -220,24 +220,24 @@ class ErgoCubBimanualController:
         if right_pose is not None:
             right_pose[3:7] = np.r_[right_pose[4:7], right_pose[3]]
 
-        # Send left arm command
-        if left_pose is not None and self.use_left_arm:
+        # Send left hand command
+        if left_pose is not None and self.use_left_hand:
             left_cmd = yarp.Bottle()
             left_cmd.addString("go_to_pose")
             for val in left_pose:
                 left_cmd.addFloat64(float(val))
-            left_cmd.addString("left")  # arm side specification
+            left_cmd.addString("left")  # hand side specification
             
             reply = yarp.Bottle()
             self.bimanual_cmd_port.write(left_cmd, reply)
         
-        # Send right arm command
-        if right_pose is not None and self.use_right_arm:
+        # Send right hand command
+        if right_pose is not None and self.use_right_hand:
             right_cmd = yarp.Bottle()
             right_cmd.addString("go_to_pose")
             for val in right_pose:
                 right_cmd.addFloat64(float(val))
-            right_cmd.addString("right")  # arm side specification
+            right_cmd.addString("right")  # hand side specification
             
             reply = yarp.Bottle()
             self.bimanual_cmd_port.write(right_cmd, reply)
@@ -247,21 +247,21 @@ class ErgoCubBimanualController:
         if not self.is_connected:
             raise DeviceNotConnectedError("ErgoCubBimanualController not connected")
         
-        # Filter commands for each arm
-        left_arm_cmds = {k.split(".", 1)[1]: v for k, v in commands.items() if k.startswith("left_arm.")}
-        right_arm_cmds = {k.split(".", 1)[1]: v for k, v in commands.items() if k.startswith("right_arm.")}
+        # Filter commands for each hand
+        left_hand_cmds = {k.split(".", 1)[1]: v for k, v in commands.items() if k.startswith("left_hand.")}
+        right_hand_cmds = {k.split(".", 1)[1]: v for k, v in commands.items() if k.startswith("right_hand.")}
         
-        # Send arm commands
-        for arm_name, arm_cmds in [("left", left_arm_cmds), ("right", right_arm_cmds)]:
-            if arm_cmds:
+        # Send hand commands
+        for hand_name, hand_cmds in [("left", left_hand_cmds), ("right", right_hand_cmds)]:
+            if hand_cmds:
                 # Extract pose components - position.x, position.y, position.z, orientation qw,qx,qy,qz
                 pos_keys = ["position.x", "position.y", "position.z"]
                 # Build scalar-first so we can rotate slice with one-liner above
                 quat_keys = ["orientation.qw", "orientation.qx", "orientation.qy", "orientation.qz"]
                 
-                if all(key in arm_cmds for key in pos_keys + quat_keys):
-                    pose = np.array([arm_cmds[key] for key in pos_keys + quat_keys])
-                    if arm_name == "left":
+                if all(key in hand_cmds for key in pos_keys + quat_keys):
+                    pose = np.array([hand_cmds[key] for key in pos_keys + quat_keys])
+                    if hand_name == "left":
                         self.send_command(left_pose=pose)
                     else:
                         self.send_command(right_pose=pose)
@@ -287,18 +287,18 @@ class ErgoCubBimanualController:
         """Get motor features for bimanual controller."""
         features = {}
         
-        # Left arm
-        if self.use_left_arm:
+        # Left hand
+        if self.use_left_hand:
             for coord in ["x", "y", "z"]:
-                features[f"left_arm.position.{coord}"] = float
+                features[f"left_hand.position.{coord}"] = float
             for coord in ["qw", "qx", "qy", "qz"]:
-                features[f"left_arm.orientation.{coord}"] = float
+                features[f"left_hand.orientation.{coord}"] = float
         
-        # Right arm
-        if self.use_right_arm:
+        # Right hand
+        if self.use_right_hand:
             for coord in ["x", "y", "z"]:
-                features[f"right_arm.position.{coord}"] = float
+                features[f"right_hand.position.{coord}"] = float
             for coord in ["qw", "qx", "qy", "qz"]:
-                features[f"right_arm.orientation.{coord}"] = float
+                features[f"right_hand.orientation.{coord}"] = float
         
         return features

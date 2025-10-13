@@ -20,7 +20,7 @@ from typing import Dict
 import math
 
 import yarp
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.robots.ergocub.manipulator import Manipulator
 
 logger = logging.getLogger(__name__)

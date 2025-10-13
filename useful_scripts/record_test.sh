@@ -4,7 +4,7 @@ python -m lerobot.record \
    --robot.remote_prefix="/ergocubSim" \
    --robot.local_prefix="/lerobot" \
    --robot.cameras='{ agentview: {"type": "yarp", "yarp_name": "camera", "width": 640, "height": 480, "fps": 30}}' \
-   --robot.control_boards='[neck,left_arm,right_arm,fingers]' \
+   --robot.control_boards='[head,left_arm,right_arm,fingers]' \
    --dataset.repo_id=steb6/eval_ergocub-point \
    --dataset.fps=10 \
    --policy.path=steb6/train-ergocub-point \

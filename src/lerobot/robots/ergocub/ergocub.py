@@ -23,7 +23,7 @@ from typing import Any
 import numpy as np
 import yarp
 from lerobot.cameras import make_cameras_from_configs
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors.ergocub import ErgoCubMotorsBus
 from lerobot.robots.robot import Robot
 
@@ -69,8 +69,7 @@ class ErgoCub(Robot):
         self.bus = ErgoCubMotorsBus(
             remote_prefix=config.remote_prefix,
             local_prefix=f"{config.local_prefix}/{self.session_id}",
-            control_boards=config.control_boards,
-            use_bimanual_controller=config.use_bimanual_controller,
+            control_boards=config.control_boards
             
         )
 

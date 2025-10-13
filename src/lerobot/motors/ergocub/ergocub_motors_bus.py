@@ -19,7 +19,7 @@ import time
 
 import numpy as np
 import yarp
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from .head_controller import ErgoCubHeadController
 from .finger_controller import ErgoCubFingerController

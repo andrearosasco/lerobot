@@ -75,7 +75,7 @@ class HandSafetyChecker:
         # Check if position values are all zeros for each configured arm
         for side in arms_to_check:
             # Check arm position values
-            arm_position_keys = [f"{side}_arm.position.x", f"{side}_arm.position.y", f"{side}_arm.position.z"]
+            arm_position_keys = [f"{side}_hand.position.x", f"{side}_hand.position.y", f"{side}_hand.position.z"]
             arm_position_values = [action[key] for key in arm_position_keys]
             
             # Sum of absolute values (like metaControllClient isValidPose)
@@ -102,9 +102,9 @@ class HandSafetyChecker:
         for side in arms_to_check:
             # Check if target position is valid (not all zeros, like metaControllClient)
             target_pos = np.array([
-                action.get(f"{side}_arm.position.x"),
-                action.get(f"{side}_arm.position.y"),
-                action.get(f"{side}_arm.position.z")
+                action[f"{side}_hand.position.x"],
+                action[f"{side}_hand.position.y"],
+                action[f"{side}_hand.position.z"]
             ])
             
             # Check for invalid poses (all zeros or NaN values, similar to metaControllClient)
@@ -115,9 +115,9 @@ class HandSafetyChecker:
             if not self.is_arm_controlled[side]:
                 # Get current position from state dict
                 current_pos = np.array([
-                    current_state.get(f"{side}_arm.position.x"),
-                    current_state.get(f"{side}_arm.position.y"),
-                    current_state.get(f"{side}_arm.position.z")
+                    current_state[f"{side}_hand.position.x"],
+                    current_state[f"{side}_hand.position.y"],
+                    current_state[f"{side}_hand.position.z"]
                 ])
                 
                 # Calculate position error
