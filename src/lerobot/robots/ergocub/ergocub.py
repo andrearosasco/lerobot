@@ -52,7 +52,7 @@ class ErgoCub(Robot):
         self.acc_state = None
 
         # Initialize safety checker
-        self.safety_checker = HandSafetyChecker(position_tolerance=0.1)
+        self.safety_checker = HandSafetyChecker(position_tolerance=0.15)
         
 
         yarp.Network.init()

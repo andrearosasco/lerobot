@@ -54,7 +54,7 @@ class ErgoCubMotorsBus:
         self.controllers = {}
         
         self.controllers["bimanual"] = ErgoCubBimanualController(
-            remote_prefix, local_prefix, 'left_hand' in control_boards, 'right_hand' in control_boards
+            remote_prefix, local_prefix, 'left_hand' in control_boards, 'right_hand' in control_boards, 'torso' in control_boards
         )
             
         if 'head' in control_boards:

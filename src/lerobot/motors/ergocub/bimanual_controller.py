@@ -24,6 +24,8 @@ from scipy.spatial.transform import Rotation as R
 from .urdf_utils import resolve_ergocub_urdf
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.model.kinematics import RobotKinematics
+from pysquale import BimanualIK, PoseInput
+from lerobot.motors.ergocub.config_real import Config as cfg
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +36,7 @@ class ErgoCubBimanualController:
     Uses /mc-ergocub-cartesian-bimanual/rpc:i with hand side specified as string parameter.
     """
     
-    def __init__(self, remote_prefix: str, local_prefix: str, use_left_hand: bool = True, use_right_hand: bool = True):
+    def __init__(self, remote_prefix: str, local_prefix: str, use_left_hand: bool = True, use_right_hand: bool = True, use_torso: bool = True):
         """
         Initialize bimanual controller.
         
@@ -46,14 +48,30 @@ class ErgoCubBimanualController:
         """
         self.remote_prefix = remote_prefix
         self.local_prefix = local_prefix
+
         self.use_left_hand = use_left_hand
         self.use_right_hand = use_right_hand
+
+        if not use_left_hand:
+            cfg.left_joints = np.array([])
+        if not use_right_hand:
+            cfg.right_joints= np.array([])
+        # if not use_torso:  # TODO make this work
+        #     cfg.torso_joints= np.array([])
+
+        self.ik = BimanualIK(**cfg.to_dict())
+        # Initial state (q, dq)
+        q0  = np.zeros(len(cfg.right_joints) + len(cfg.left_joints) + len(cfg.torso_joints))
+        dq0 = np.zeros(len(cfg.right_joints) + len(cfg.left_joints) + len(cfg.torso_joints))
+        self.ik.reset(q0, dq0)
         
         # YARP ports
-        self.bimanual_cmd_port = yarp.RpcClient()
         self.left_encoders_port = yarp.BufferedPortBottle()
         self.right_encoders_port = yarp.BufferedPortBottle()
         self.torso_encoders_port = yarp.BufferedPortBottle()
+        # use a control board remapper to control the joints
+        joints = cfg.left_joints.tolist() + cfg.right_joints.tolist() + cfg.torso_joints.tolist()
+
         
         self._is_connected = False
         
@@ -76,19 +94,19 @@ class ErgoCubBimanualController:
     
     def connect(self) -> None:
         """Connect to YARP bimanual control port."""
-        if self.is_connected:
+        if self._is_connected:
             raise DeviceAlreadyConnectedError("ErgoCubBimanualController already connected")
         
-        # Open RPC port for bimanual commands
-        bimanual_cmd_local = f"{self.local_prefix}/bimanual/rpc:o"
-        if not self.bimanual_cmd_port.open(bimanual_cmd_local):
-            raise ConnectionError(f"Failed to open bimanual RPC port {bimanual_cmd_local}")
+        # # Open RPC port for bimanual commands
+        # bimanual_cmd_local = f"{self.local_prefix}/bimanual/rpc:o"
+        # if not self.bimanual_cmd_port.open(bimanual_cmd_local):
+        #     raise ConnectionError(f"Failed to open bimanual RPC port {bimanual_cmd_local}")
         
-        # Connect to bimanual cartesian controller
-        bimanual_cmd_remote = "/mc-ergocub-cartesian-bimanual/rpc:i"
-        while not yarp.Network.connect(bimanual_cmd_local, bimanual_cmd_remote):
-            logger.warning(f"Failed to connect {bimanual_cmd_local} -> {bimanual_cmd_remote}, retrying...")
-            time.sleep(1)
+        # # Connect to bimanual cartesian controller
+        # bimanual_cmd_remote = "/mc-ergocub-cartesian-bimanual/rpc:i"
+        # while not yarp.Network.connect(bimanual_cmd_local, bimanual_cmd_remote):
+        #     logger.warning(f"Failed to connect {bimanual_cmd_local} -> {bimanual_cmd_remote}, retrying...")
+        #     time.sleep(1)
         
         # Connect encoder ports for both hands
         if self.use_left_hand:
@@ -201,46 +219,9 @@ class ErgoCubBimanualController:
         
         return state
     
-    def send_command(self, left_pose: np.ndarray = None, right_pose: np.ndarray = None) -> None:
-        """
-        Send commands to bimanual controller.
-        
-        Args:
-            left_pose: Left hand pose [x, y, z, qw, qx, qy, qz] (optional)
-            left_fingers: Left finger commands (optional)
-            right_pose: Right hand pose [x, y, z, qw, qx, qy, qz] (optional)
-            right_fingers: Right finger commands (optional)
-        """
-        if not self.is_connected:
-            raise DeviceNotConnectedError("ErgoCubBimanualController not connected")
-        
-        # One-liner: move scalar (qw) from index 3 to the end -> [x,y,z,qw,qx,qy,qz]
-        if left_pose is not None:
-            left_pose[3:7] = np.r_[left_pose[4:7], left_pose[3]]
-        if right_pose is not None:
-            right_pose[3:7] = np.r_[right_pose[4:7], right_pose[3]]
+    def send_command(self, q: np.ndarray = None) -> None:
+        pass
 
-        # Send left hand command
-        if left_pose is not None and self.use_left_hand:
-            left_cmd = yarp.Bottle()
-            left_cmd.addString("go_to_pose")
-            for val in left_pose:
-                left_cmd.addFloat64(float(val))
-            left_cmd.addString("left")  # hand side specification
-            
-            reply = yarp.Bottle()
-            self.bimanual_cmd_port.write(left_cmd, reply)
-        
-        # Send right hand command
-        if right_pose is not None and self.use_right_hand:
-            right_cmd = yarp.Bottle()
-            right_cmd.addString("go_to_pose")
-            for val in right_pose:
-                right_cmd.addFloat64(float(val))
-            right_cmd.addString("right")  # hand side specification
-            
-            reply = yarp.Bottle()
-            self.bimanual_cmd_port.write(right_cmd, reply)
     
     def send_commands(self, commands: dict[str, float]) -> None:
         """Send commands to bimanual controller."""
@@ -250,6 +231,10 @@ class ErgoCubBimanualController:
         # Filter commands for each hand
         left_hand_cmds = {k.split(".", 1)[1]: v for k, v in commands.items() if k.startswith("left_hand.")}
         right_hand_cmds = {k.split(".", 1)[1]: v for k, v in commands.items() if k.startswith("right_hand.")}
+
+        # Prepare inputs
+        left_pose = PoseInput() if left_hand_cmds else None
+        right_pose = PoseInput() if right_hand_cmds else None
         
         # Send hand commands
         for hand_name, hand_cmds in [("left", left_hand_cmds), ("right", right_hand_cmds)]:
@@ -262,9 +247,15 @@ class ErgoCubBimanualController:
                 if all(key in hand_cmds for key in pos_keys + quat_keys):
                     pose = np.array([hand_cmds[key] for key in pos_keys + quat_keys])
                     if hand_name == "left":
-                        self.send_command(left_pose=pose)
+                        left_pose.pos = pose[:3]
+                        left_pose.quat = np.r_[pose[4:7], pose[3]]
                     else:
-                        self.send_command(right_pose=pose)
+                        right_pose.pos = pose[:3]
+                        right_pose.quat = np.r_[pose[4:7], pose[3]]
+
+        # Compute inverse kinematics and send commands
+        q = self.ik.solve_ik(right_pose=right_pose, left_pose=left_pose)
+        self.send_command(q)
         
         # Handle finger commands (bimanual controller doesn't actually control fingers, 
         # but we need to accept the commands to avoid errors during recording)
@@ -276,11 +267,8 @@ class ErgoCubBimanualController:
 
     def reset(self) -> None:
         """Reset the bimanual controller"""
-        right_cmd = yarp.Bottle()
-        right_cmd.addString("go_home")
-        
-        reply = yarp.Bottle()
-        self.bimanual_cmd_port.write(right_cmd, reply)
+        # TODO implement reset for bimanual and fingers
+        pass
 
     @property
     def motor_features(self) -> dict[str, type]:
