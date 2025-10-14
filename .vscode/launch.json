@@ -54,7 +54,7 @@
       "env": {
         "PYTHONPATH": "${workspaceFolder}/src"
       },
-  "preLaunchTask": "clear-hf-cache",
+      "preLaunchTask": "clear-hf-cache",
       "args": [
         "--robot.type=ergocub",
         "--robot.remote_prefix=/ergocubSim",
