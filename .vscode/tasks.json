@@ -19,7 +19,7 @@
     {
       "label": "clear-hf-cache",
       "type": "shell",
-      "command": "rm -rf /home/sberti/.cache/huggingface/lerobot/steb6/test",
+      "command": "rm -rf /home/sberti/.cache/huggingface/lerobot/steb6/eval_redballppp",
       "options": {
         "cwd": "${workspaceFolder}"
       },

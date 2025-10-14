@@ -70,12 +70,18 @@ class ErgoCubBimanualController:
         self.right_encoders_port = yarp.BufferedPortBottle()
         self.torso_encoders_port = yarp.BufferedPortBottle()
         # use a control board remapper to control the joints
+<<<<<<< HEAD
         # prepare mapping from joint name -> index in the single remapped controlboard
         self.joint_names = cfg.right_joints + cfg.left_joints + cfg.torso_joints
         # placeholders for YARP driver / interfaces (opened in connect)
         self._driver = None
         self._ipos = None
 
+=======
+        joints = cfg.left_joints.tolist() + cfg.right_joints.tolist() + cfg.torso_joints.tolist()
+
+        
+>>>>>>> 6abeb6c (Before to add joints actuation for bimanual)
         self._is_connected = False
         
         # Initialize kinematics solvers for both hands if needed
@@ -100,6 +106,20 @@ class ErgoCubBimanualController:
         if self._is_connected:
             raise DeviceAlreadyConnectedError("ErgoCubBimanualController already connected")
         
+<<<<<<< HEAD
+=======
+        # # Open RPC port for bimanual commands
+        # bimanual_cmd_local = f"{self.local_prefix}/bimanual/rpc:o"
+        # if not self.bimanual_cmd_port.open(bimanual_cmd_local):
+        #     raise ConnectionError(f"Failed to open bimanual RPC port {bimanual_cmd_local}")
+        
+        # # Connect to bimanual cartesian controller
+        # bimanual_cmd_remote = "/mc-ergocub-cartesian-bimanual/rpc:i"
+        # while not yarp.Network.connect(bimanual_cmd_local, bimanual_cmd_remote):
+        #     logger.warning(f"Failed to connect {bimanual_cmd_local} -> {bimanual_cmd_remote}, retrying...")
+        #     time.sleep(1)
+        
+>>>>>>> 6abeb6c (Before to add joints actuation for bimanual)
         # Connect encoder ports for both hands
         if self.use_left_hand:
             left_encoders_local = f"{self.local_prefix}/bimanual/left_encoders:i"
@@ -317,7 +337,12 @@ class ErgoCubBimanualController:
 
     def reset(self) -> None:
         """Reset the bimanual controller"""
+<<<<<<< HEAD
         self.send_command(np.array([0.0]*len(self.joint_names)))
+=======
+        # TODO implement reset for bimanual and fingers
+        pass
+>>>>>>> 6abeb6c (Before to add joints actuation for bimanual)
 
     @property
     def motor_features(self) -> dict[str, type]:
