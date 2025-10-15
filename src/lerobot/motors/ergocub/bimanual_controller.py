@@ -70,9 +70,12 @@ class ErgoCubBimanualController:
         self.right_encoders_port = yarp.BufferedPortBottle()
         self.torso_encoders_port = yarp.BufferedPortBottle()
         # use a control board remapper to control the joints
-        joints = cfg.left_joints.tolist() + cfg.right_joints.tolist() + cfg.torso_joints.tolist()
+        # prepare mapping from joint name -> index in the single remapped controlboard
+        self.joint_names = cfg.right_joints + cfg.left_joints + cfg.torso_joints
+        # placeholders for YARP driver / interfaces (opened in connect)
+        self._driver = None
+        self._ipos = None
 
-        
         self._is_connected = False
         
         # Initialize kinematics solvers for both hands if needed
@@ -96,17 +99,6 @@ class ErgoCubBimanualController:
         """Connect to YARP bimanual control port."""
         if self._is_connected:
             raise DeviceAlreadyConnectedError("ErgoCubBimanualController already connected")
-        
-        # # Open RPC port for bimanual commands
-        # bimanual_cmd_local = f"{self.local_prefix}/bimanual/rpc:o"
-        # if not self.bimanual_cmd_port.open(bimanual_cmd_local):
-        #     raise ConnectionError(f"Failed to open bimanual RPC port {bimanual_cmd_local}")
-        
-        # # Connect to bimanual cartesian controller
-        # bimanual_cmd_remote = "/mc-ergocub-cartesian-bimanual/rpc:i"
-        # while not yarp.Network.connect(bimanual_cmd_local, bimanual_cmd_remote):
-        #     logger.warning(f"Failed to connect {bimanual_cmd_local} -> {bimanual_cmd_remote}, retrying...")
-        #     time.sleep(1)
         
         # Connect encoder ports for both hands
         if self.use_left_hand:
@@ -138,9 +130,33 @@ class ErgoCubBimanualController:
         while not yarp.Network.connect(torso_encoders_remote, torso_encoders_local):
             logger.warning(f"Failed to connect {torso_encoders_remote} -> {torso_encoders_local}, retrying...")
             time.sleep(1)
-        
+
+        # Open controlboard remapper PolyDriver for position control of all joints
+        props = yarp.Property()
+        props.put("robot", "ergocubSim")
+        props.put("device", "remotecontrolboardremapper")
+        props.put("localPortPrefix", f"{self.local_prefix}/bimanual/controlboard")
+        remote_control_boards = yarp.Bottle()
+        remote_control_boards_list = remote_control_boards.addList()
+        for control_board in ["/ergocubSim/torso", "/ergocubSim/right_arm", "/ergocubSim/left_arm"]:
+            remote_control_boards_list.addString(control_board)
+        props.put("remoteControlBoards", remote_control_boards.get(0))
+        axesNames = yarp.Bottle()
+        axesNames_list = axesNames.addList()
+        for joint in self.joint_names:
+            axesNames_list.addString(joint)
+        props.put("axesNames", axesNames.get(0))
+        self._driver = yarp.PolyDriver()
+        if not self._driver.open(props):
+            raise ConnectionError(f"Failed to open PolyDriver for controlboard remapper")
+        # Query position control interface
+        self._ipos = self._driver.viewIPositionControl()
+        if self._ipos is None:
+            raise ConnectionError("IPositionControl interface not available on remapper driver")
+
         self._is_connected = True
         logger.info("ErgoCubBimanualController connected")
+
     
     def disconnect(self) -> None:
         """Disconnect from YARP ports."""
@@ -156,6 +172,14 @@ class ErgoCubBimanualController:
         
         self._is_connected = False
         logger.info("ErgoCubBimanualController disconnected")
+        # Close driver if opened
+        if self._driver is not None:
+            try:
+                self._driver.close()
+            except Exception:
+                pass
+            self._driver = None
+            self._ipos = None
     
     def read_current_state(self) -> Dict[str, float]:
         """Read current state for both hands."""
@@ -220,7 +244,33 @@ class ErgoCubBimanualController:
         return state
     
     def send_command(self, q: np.ndarray = None) -> None:
-        pass
+        """Send joint positions to the controlboard remapper.
+
+        q should be a 1D numpy array with length equal to the number of joints in
+        `self.joint_names` (left + right + torso order used above).
+        """
+        if not self.is_connected:
+            raise DeviceNotConnectedError("ErgoCubBimanualController not connected")
+        if q is None:
+            return
+        if q.size != len(self.joint_names):
+            raise ValueError(f"Expected q of length {len(self.joint_names)}, got {q.size}")
+
+        # If position control interface is available, send all positions
+        if self._ipos is not None:
+            try:
+                pos = yarp.Vector()
+                for i in range(len(self.joint_names)):
+                    pos.push_back(np.degrees(q[i]))  # convert to degrees
+                    # pos.push_back(q[i])
+                ok = self._ipos.positionMove(pos.data())
+                if not ok:
+                    raise ConnectionError("IPositionControl.positionMove reported failure")
+            except Exception as e:
+                raise ConnectionError("Failed to send positions via IPositionControl: %s", e)
+        else:
+            # Fallback: log that positions would be sent
+            raise ConnectionError("No IPositionControl available; would send positions: %s", q.tolist())
 
     
     def send_commands(self, commands: dict[str, float]) -> None:
@@ -267,8 +317,7 @@ class ErgoCubBimanualController:
 
     def reset(self) -> None:
         """Reset the bimanual controller"""
-        # TODO implement reset for bimanual and fingers
-        pass
+        self.send_command(np.array([0.0]*len(self.joint_names)))
 
     @property
     def motor_features(self) -> dict[str, type]:
