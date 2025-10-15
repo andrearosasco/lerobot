@@ -10,6 +10,7 @@
       "env": {
         "PYTHONPATH": "${workspaceFolder}/src"
       },
+      "preLaunchTask": "clear-test",
       "args": [
         "--robot.type=ergocub",
         "--robot.remote_prefix=/ergocubSim",
@@ -18,11 +19,10 @@
         "--robot.control_boards=[head,left_hand,right_hand,fingers]",
         "--dataset.repo_id=steb6/eval_redballppp",
         "--dataset.fps=10",
-        "--policy.path=steb6/redballppp",
-        "--policy.num_inference_steps=10",
+        "--policy.path=steb6/train-redball-act",
         "--dataset.single_task=get the ball",
         "--dataset.reset_time=0",
-        "--dataset.episode_time=15",
+        "--dataset.episode_time=10",
         "--dataset.fps=10"
       ]
     }
@@ -36,6 +36,7 @@
       "env": {
         "PYTHONPATH": "${workspaceFolder}/src"
       },
+      "preLaunchTask": "clear-test",
       "args": [
         "--policy.type=diffusion",
         "--policy.repo_id=steb6/train-redball",
@@ -54,7 +55,7 @@
       "env": {
         "PYTHONPATH": "${workspaceFolder}/src"
       },
-      "preLaunchTask": "clear-hf-cache",
+      "preLaunchTask": "clear-record",
       "args": [
         "--robot.type=ergocub",
         "--robot.remote_prefix=/ergocubSim",
