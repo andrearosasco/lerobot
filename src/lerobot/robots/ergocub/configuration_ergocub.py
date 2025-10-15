@@ -37,8 +37,6 @@ class ErgoCubConfig(RobotConfig):
     )
     # Whether to use bimanual controller instead of separate arm controllers
     use_bimanual_controller: bool = True
-    # Whether to use finger controller (both hands). New flag; default True for backward compatibility.
-    # Legacy field for backward compatibility (not used with new motor bus)
-    encoders_control_boards: List[str] = field(
-        default_factory=lambda: ["head", "left_arm", "right_arm", "torso"]
-    )
+    # Control mode: if True, actions are absolute targets (default, preserves behavior).
+    # If False, actions are interpreted as deltas relative to the current/last target.
+    absolute: bool = True

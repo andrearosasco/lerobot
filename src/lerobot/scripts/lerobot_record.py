@@ -64,7 +64,6 @@ python -m lerobot.record \
   --robot.remote_prefix="/ergocubSim" \
   --robot.local_prefix="/lerobot" \
   --robot.cameras='{ agentview: {"type": "yarp", "yarp_name": "depthCamera", "width": 640, "height": 480, "fps": 30} }' \
-  --robot.encoders_control_boards='[head,left_arm,right_arm,torso]' \
   --teleop.type=metaquest \
   --teleop.remote_prefix="/metaControllClient" \
   --teleop.local_prefix="/lerobot" \

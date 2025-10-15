@@ -22,7 +22,7 @@ import numpy as np
 import yarp
 from scipy.spatial.transform import Rotation as R
 from .urdf_utils import resolve_ergocub_urdf
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.model.kinematics import RobotKinematics
 
 if TYPE_CHECKING:

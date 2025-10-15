@@ -1,0 +1,48 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "run-record-test",
+      "type": "shell",
+      "command": "${workspaceFolder}/useful_scripts/record_test.sh",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "panel": "shared"
+      }
+    }
+    ,
+    {
+      "label": "clear-record",
+      "type": "shell",
+      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/steb6/redball",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "clear-test",
+      "type": "shell",
+      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/steb6/eval_redballppp",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "panel": "shared"
+      }
+    }
+  ]
+}

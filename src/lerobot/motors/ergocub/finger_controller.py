@@ -20,7 +20,8 @@ from typing import Dict
 import math
 
 import yarp
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.robots.ergocub.manipulator import Manipulator
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,11 @@ class ErgoCubFingerController:
         
         # Joint names for each hand (same order for left and right)
         self.joint_names = ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]
+        # Per-hand kinematics solvers for fingertip-to-joint IK
+        self.finger_kinematics = {
+            "left": Manipulator("src/lerobot/robots/ergocub/ergocub_hand_left/model.urdf"),
+            "right": Manipulator("src/lerobot/robots/ergocub/ergocub_hand_right/model.urdf"),
+        }
     
     @property
     def is_connected(self) -> bool:
@@ -93,7 +99,10 @@ class ErgoCubFingerController:
         if not self.is_connected:
             raise DeviceNotConnectedError("ErgoCubFingerController not connected")
         
-        # Extract finger commands for both hands
+        # Convert fingertip inputs to joint angles if present
+        commands = self._compute_finger_joints(dict(commands))
+
+        # Extract finger joint commands for both hands
         left_finger_cmds = {k.split(".", 1)[1]: v for k, v in commands.items() if k.startswith("left_fingers.")}
         right_finger_cmds = {k.split(".", 1)[1]: v for k, v in commands.items() if k.startswith("right_fingers.")}
         
@@ -106,13 +115,11 @@ class ErgoCubFingerController:
             # Add left hand joints (first 6 floats)
             for joint in self.joint_names:
                 value = left_finger_cmds.get(joint, 0.0)
-                # Convert from radians to degrees
                 finger_bottle.addFloat64(value)
             
             # Add right hand joints (next 6 floats)
             for joint in self.joint_names:
                 value = right_finger_cmds.get(joint, 0.0)
-                # Convert from radians to degrees
                 finger_bottle.addFloat64(value)
             
             # Send the bottle
@@ -133,3 +140,40 @@ class ErgoCubFingerController:
             features[f"right_fingers.{joint}"] = float
         
         return features
+
+    # --------------------------- Helpers ---------------------------------
+    def _compute_finger_joints(self, action: dict[str, float]) -> dict[str, float]:
+        """Compute finger joint angles from fingertip positions via IK.
+        If direct joint commands exist for a hand, skip IK for that hand.
+        Output joint values are in degrees.
+        """
+        for side in ["left", "right"]:
+            if side not in self.finger_kinematics:
+                continue
+
+            has_direct = any(f"{side}_fingers.{jn}" in action for jn in self.joint_names)
+            if has_direct:
+                continue
+
+            finger_positions = []
+            finger_tip_keys = []
+            for finger in ["thumb", "index", "middle", "ring", "pinky"]:
+                keys = [f"{side}_fingers.{finger}.{coord}" for coord in ["x", "y", "z"]]
+                if all(k in action for k in keys):
+                    finger_positions.append([action[k] for k in keys])
+                    finger_tip_keys.extend(keys)
+
+            if len(finger_positions) == 0:
+                continue
+
+            assert len(finger_positions) == 5, "Expect 5 fingertips when using teleop inputs"
+            self.finger_kinematics[side].inverse_kinematic(finger_positions)
+            joint_angles = self.finger_kinematics[side].get_driver_value()
+            for i, joint in enumerate(self.joint_names):
+                if i < len(joint_angles):
+                    action[f"{side}_fingers.{joint}"] = joint_angles[i] * 180.0 / math.pi
+
+            for k in finger_tip_keys:
+                action.pop(k, None)
+
+        return action

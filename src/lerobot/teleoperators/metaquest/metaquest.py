@@ -20,11 +20,39 @@ from typing import Any
 
 import numpy as np
 import yarp
-from lerobot.errors import DeviceNotConnectedError
+from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.teleoperators.teleoperator import Teleoperator
 
 from .configuration_metaquest import MetaQuestConfig
 from scipy.spatial.transform import Rotation as R
+from lerobot.robots.ergocub.manipulator import Manipulator
+
+HEAD_TO_ROOT = np.array([
+    [1.0, 0.0, 0.0, 0.005],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.547],
+    [0.0, 0.0, 0.0, 1.0]
+])
+RHS_WO_HEAD_I_TRANSF = np.array([
+    [0.0, 0.0, -1.0, 0.0],
+    [-1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0]
+])
+HEAD_ADAPTER = np.array([
+    [0.0, -1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [-1.0, 0.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0]
+])
+RIGHT_HAND_ADAPTER = np.array([
+    [-1.0, 0.0, 0.0, 0.0],
+    [0.0, -1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0]
+])
+LEFT_HAND_ADAPTER = np.eye(4)
+QUEST_TO_ECUB = HEAD_TO_ROOT @ RHS_WO_HEAD_I_TRANSF
 
 
 class MetaQuest(Teleoperator):
@@ -56,6 +84,19 @@ class MetaQuest(Teleoperator):
             ("ring_tip", 20),
             ("pinky_tip", 25)
         ]
+
+        # Joint names for each hand (same order for left and right)
+        self.joint_names = ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]
+        # Per-hand kinematics solvers for fingertip-to-joint IK
+        self.finger_kinematics = {
+            "left": Manipulator("src/lerobot/robots/ergocub/ergocub_hand_left/model.urdf"),
+            "right": Manipulator("src/lerobot/robots/ergocub/ergocub_hand_right/model.urdf"),
+        }
+
+    def _do_inverse_fingers_kinematics(self, side: str, finger_positions: list[np.ndarray]) -> list[float]:
+            self.finger_kinematics[side].inverse_kinematic(finger_positions)
+            joint_values = self.finger_kinematics[side].get_driver_value()
+            return np.degrees(joint_values).tolist()
 
     def __del__(self):
         """Destructor to ensure proper cleanup and avoid memory leaks."""
@@ -153,61 +194,38 @@ class MetaQuest(Teleoperator):
     def _get_head_pose(self) -> dict:
         """Get raw head pose from MetaQuest."""
         transform = self._get_transform("openxr_head")
-        
-        # Extract position and rotation from 4x4 transformation matrix
+        transform = (QUEST_TO_ECUB @ transform @ HEAD_ADAPTER)
+
         position = transform[:3, 3]
-        rotation_matrix = transform[:3, :3]
-        
-        # Convert rotation matrix to quaternion (x, y, z, w) using scipy
-        quat = R.from_matrix(rotation_matrix).as_quat(canonical=True, scalar_first=True)  # [w, x, y, z]
-        qw, qx, qy, qz = quat[0], quat[1], quat[2], quat[3]
-        
-        return {
-            "position": {"x": float(position[0]), "y": float(position[1]), "z": float(position[2])},
-            "orientation": {"qw": float(qw), "qx": float(qx), "qy": float(qy), "qz": float(qz)}
-        }
+        quat = R.from_matrix(transform[:3, :3]).as_quat(canonical=True, scalar_first=True)  # [w, x, y, z]
+        return np.r_[position, quat]
+
 
     def _get_hand_pose(self, side: str) -> dict:
         """Get raw hand pose from MetaQuest."""
         frame_name = f"openxr_{side}_hand"
         transform = self._get_transform(frame_name)
-        
-        # Extract position and rotation from 4x4 transformation matrix
+        HAND_ADAPTER = LEFT_HAND_ADAPTER if side == "left" else RIGHT_HAND_ADAPTER
+        transform = (QUEST_TO_ECUB @ transform @ HAND_ADAPTER)
+
         position = transform[:3, 3]
-        rotation_matrix = transform[:3, :3]
-        
-        # Convert rotation matrix to quaternion (x, y, z, w)
-        quat = R.from_matrix(rotation_matrix).as_quat(canonical=True, scalar_first=True)  # [x, y, z, w]
-        qw, qx, qy, qz = quat[0], quat[1], quat[2], quat[3]
-        
-        return {
-            "position": {"x": float(position[0]), "y": float(position[1]), "z": float(position[2])},
-            "orientation": {"qw": float(qw), "qx": float(qx), "qy": float(qy), "qz": float(qz)}
-        }
+        quat = R.from_matrix(transform[:3, :3]).as_quat(canonical=True, scalar_first=True)  # [w, x, y, z]
+        return np.r_[position, quat]
 
     def _get_finger_poses(self, side: str) -> dict:
         """Get raw finger poses from MetaQuest relative to hand frame."""
-        finger_poses = {}
-        
         hand_frame = f"openxr_{side}_hand_finger_0"  # Reference frame (hand)
+        positions = []
         
-        for finger_name, finger_index in self.finger_index_pairs:
+        for _, finger_index in self.finger_index_pairs:
             finger_frame = f"openxr_{side}_hand_finger_{finger_index}"
             transform = self._get_transform(finger_frame, hand_frame)
             
             # Extract position from transformation matrix
             position = transform[:3, 3]
+            positions.append(position)
             
-            # Clean up finger name (remove _tip suffix for consistency)
-            clean_name = finger_name.replace("_tip", "")
-            
-            finger_poses[clean_name] = {
-                "x": float(position[0]),
-                "y": float(position[1]), 
-                "z": float(position[2])
-            }
-        
-        return finger_poses
+        return positions
 
     def get_action(self) -> dict[str, Any]:
         """
@@ -227,49 +245,15 @@ class MetaQuest(Teleoperator):
         # Get finger poses
         left_finger_poses = self._get_finger_poses("left")
         right_finger_poses = self._get_finger_poses("right")
+
+        # Apply inverse fingers kinematics
+        left_fingers_joints = self._do_inverse_fingers_kinematics("left", left_finger_poses)
+        right_fingers_joints = self._do_inverse_fingers_kinematics("right", right_finger_poses)
         
         # Build flattened action dictionary that matches action_features
-        action = {}
-        
-        # Head pose
-        action["head.position.x"] = head_pose["position"]["x"]
-        action["head.position.y"] = head_pose["position"]["y"] 
-        action["head.position.z"] = head_pose["position"]["z"]
-        action["head.orientation.qw"] = head_pose["orientation"]["qw"]
-        action["head.orientation.qx"] = head_pose["orientation"]["qx"]
-        action["head.orientation.qy"] = head_pose["orientation"]["qy"]
-        action["head.orientation.qz"] = head_pose["orientation"]["qz"]
-        
-        # Left hand pose
-        action["left_hand.position.x"] = left_hand_pose["position"]["x"]
-        action["left_hand.position.y"] = left_hand_pose["position"]["y"]
-        action["left_hand.position.z"] = left_hand_pose["position"]["z"]
-        action["left_hand.orientation.qw"] = left_hand_pose["orientation"]["qw"]
-        action["left_hand.orientation.qx"] = left_hand_pose["orientation"]["qx"]
-        action["left_hand.orientation.qy"] = left_hand_pose["orientation"]["qy"]
-        action["left_hand.orientation.qz"] = left_hand_pose["orientation"]["qz"]
-        
-        # Right hand pose
-        action["right_hand.position.x"] = right_hand_pose["position"]["x"]
-        action["right_hand.position.y"] = right_hand_pose["position"]["y"]
-        action["right_hand.position.z"] = right_hand_pose["position"]["z"]
-        action["right_hand.orientation.qw"] = right_hand_pose["orientation"]["qw"]
-        action["right_hand.orientation.qx"] = right_hand_pose["orientation"]["qx"]
-        action["right_hand.orientation.qy"] = right_hand_pose["orientation"]["qy"]
-        action["right_hand.orientation.qz"] = right_hand_pose["orientation"]["qz"]
-        
-        # Left finger poses
-        for finger_name in ["thumb", "index", "middle", "ring", "pinky"]:
-
-            action[f"left_fingers.{finger_name}.x"] = left_finger_poses[finger_name]["x"]
-            action[f"left_fingers.{finger_name}.y"] = left_finger_poses[finger_name]["y"]
-            action[f"left_fingers.{finger_name}.z"] = left_finger_poses[finger_name]["z"]
-
-            action[f"right_fingers.{finger_name}.x"] = right_finger_poses[finger_name]["x"]
-            action[f"right_fingers.{finger_name}.y"] = right_finger_poses[finger_name]["y"]
-            action[f"right_fingers.{finger_name}.z"] = right_finger_poses[finger_name]["z"]
-                
-        
+        keys = list(self.action_features.keys())
+        vals = np.concatenate([head_pose, left_hand_pose, right_hand_pose, left_fingers_joints, right_fingers_joints])
+        action = dict(zip(keys, vals.tolist()))
         return action
 
 
@@ -307,39 +291,21 @@ class MetaQuest(Teleoperator):
             "right_hand.orientation.qy": float,
             "right_hand.orientation.qz": float,
             
-            # Left finger positions (relative to left hand)
-            "left_fingers.thumb.x": float,
-            "left_fingers.thumb.y": float,
-            "left_fingers.thumb.z": float,
-            "left_fingers.index.x": float,
-            "left_fingers.index.y": float,
-            "left_fingers.index.z": float,
-            "left_fingers.middle.x": float,
-            "left_fingers.middle.y": float,
-            "left_fingers.middle.z": float,
-            "left_fingers.ring.x": float,
-            "left_fingers.ring.y": float,
-            "left_fingers.ring.z": float,
-            "left_fingers.pinky.x": float,
-            "left_fingers.pinky.y": float,
-            "left_fingers.pinky.z": float,
+            # Left finger joints
+            "left_fingers.thumb_add": float,
+            "left_fingers.thumb_oc": float,
+            "left_fingers.index_add": float,
+            "left_fingers.index_oc": float,
+            "left_fingers.middle_oc": float,
+            "left_fingers.ring_pinky_oc": float,
             
-            # Right finger positions (relative to right hand)
-            "right_fingers.thumb.x": float,
-            "right_fingers.thumb.y": float,
-            "right_fingers.thumb.z": float,
-            "right_fingers.index.x": float,
-            "right_fingers.index.y": float,
-            "right_fingers.index.z": float,
-            "right_fingers.middle.x": float,
-            "right_fingers.middle.y": float,
-            "right_fingers.middle.z": float,
-            "right_fingers.ring.x": float,
-            "right_fingers.ring.y": float,
-            "right_fingers.ring.z": float,
-            "right_fingers.pinky.x": float,
-            "right_fingers.pinky.y": float,
-            "right_fingers.pinky.z": float,
+            # Right finger joints
+            "right_fingers.thumb_add": float,
+            "right_fingers.thumb_oc": float,
+            "right_fingers.index_add": float,
+            "right_fingers.index_oc": float,
+            "right_fingers.middle_oc": float,
+            "right_fingers.ring_pinky_oc": float,
         }
 
     @property

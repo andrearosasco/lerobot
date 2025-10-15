@@ -23,14 +23,12 @@ from typing import Any
 import numpy as np
 import yarp
 from lerobot.cameras import make_cameras_from_configs
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors.ergocub import ErgoCubMotorsBus
 from lerobot.robots.robot import Robot
 
 from .configuration_ergocub import ErgoCubConfig
 from .safety_utils import HandSafetyChecker
-from .metaquest_transforms import transform_metaquest_to_ergocub
-from .manipulator import Manipulator
 
 logger = logging.getLogger(__name__)
 
@@ -47,27 +45,21 @@ class ErgoCub(Robot):
         self.config = config
         self.session_id = uuid.uuid4()
         self._is_connected = False
+        # Absolute vs relative action mode
+        self.absolute = bool(getattr(config, "absolute", True))
+        # Accumulator cache for relative mode; stores the last absolute command we sent (per-key)
+        # Initialized lazily from encoders when first used
+        self.acc_state = None
 
         # Initialize safety checker
         self.safety_checker = HandSafetyChecker(position_tolerance=0.1)
         
-        # Initialize finger kinematics using Manipulator class
-        self.finger_kinematics = {}
-        
-        left_hand_urdf = "src/lerobot/robots/ergocub/ergocub_hand_left/model.urdf"
-        self.finger_kinematics["left"] = Manipulator(left_hand_urdf)
-    
-        right_hand_urdf = "src/lerobot/robots/ergocub/ergocub_hand_right/model.urdf"
-        self.finger_kinematics["right"] = Manipulator(right_hand_urdf)
 
         yarp.Network.init()
 
-        # Create cameras via the standard LeRobot factory. For YARP cameras,
-        # inject a per-session local_prefix into the config so they open ports
-        # under e.g. "/ergocub_dashboard/<session_id>".
+
         prepared_camera_configs = {}
         for cam_name, cam_config in config.cameras.items():
-            # Provide a per-session local prefix; harmless for non-YARP configs
             cam_config.local_prefix = f"{config.local_prefix}/{self.session_id}"
             prepared_camera_configs[cam_name] = cam_config
 
@@ -77,8 +69,7 @@ class ErgoCub(Robot):
         self.bus = ErgoCubMotorsBus(
             remote_prefix=config.remote_prefix,
             local_prefix=f"{config.local_prefix}/{self.session_id}",
-            control_boards=config.control_boards,
-            use_bimanual_controller=config.use_bimanual_controller,
+            control_boards=config.control_boards
             
         )
 
@@ -93,9 +84,11 @@ class ErgoCub(Robot):
         for cam in self.cameras.values():
             cam.connect()
         
-        # Connect motor bus (arm and neck controllers)
+        # Connect motor bus (hand and head controllers)
         self.bus.connect()
         self._is_connected = True
+
+        self.acc_state = self.bus.read_state()
         
         if not self.is_calibrated and calibrate:
             logger.info("ErgoCub doesn't require calibration - skipping.")
@@ -152,36 +145,20 @@ class ErgoCub(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # Check for any invalid values that might cause safety checker to fail
-        invalid_keys = []
-        for key, value in action.items():
-            if value is None or (hasattr(value, "__iter__") and not isinstance(value, (str, bytes))):
-                invalid_keys.append((key, value))
-            try:
-                float(value)
-            except (ValueError, TypeError):
-                invalid_keys.append((key, value))
-
-        if invalid_keys:
-            print(f"🔧 send_action: Found {len(invalid_keys)} invalid action values:")
-            for key, value in invalid_keys[:5]:
-                print(f"🔧   {key}: {value} (type: {type(value)})")
-
-        # Apply MetaQuest coordinate transforms if enabled
-        action = transform_metaquest_to_ergocub(action)
-        # Compute finger joint angles from finger tip positions (if fingers enabled)
-        action = self.compute_finger_joints(action)
+        # If using relative mode, convert incoming deltas to absolute targets
+        if not self.absolute:
+            action = self.to_absolute(action)
 
         # Basic safety checks (action must be in robot format by now)
-        # Determine which arms are active based on configured control boards
-        arms_to_check = [side for side in ["left", "right"] if f"{side}_arm" in self.config.control_boards]
+        # Determine which hands are active based on configured control boards
+        hands_to_check = [side for side in ["left", "right"] if f"{side}_hand" in self.config.control_boards]
 
         current_state = self.bus.read_state()
 
-        if not self.safety_checker.is_valid_action(action, arms_to_check):
+        if not self.safety_checker.is_valid_action(action, hands_to_check):
             return current_state
 
-        if not self.safety_checker.check_hand_position_safety(action, current_state, arms_to_check):
+        if not self.safety_checker.check_hand_position_safety(action, current_state, hands_to_check):
             return current_state
 
         # Send commands via motor bus
@@ -193,56 +170,29 @@ class ErgoCub(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
         
-        # Reset motor bus (arms and neck)
+        # Reset motor bus (hands and head)
         self.bus.reset()
+        self.acc_state = self.bus.read_state()
         logger.info("%s has been reset.", self)
 
-    def compute_finger_joints(self, action: dict[str, Any]) -> dict[str, Any]:
-        """Compute finger joint angles from MetaQuest finger tip positions using Manipulator.
-        
-        If the action already contains direct joint commands (from policy), skip IK computation.
-        If the action contains finger tip positions (from teleoperation), compute joint angles via IK.
+    # ---------------------------------------------------------------------
+    # Relative-to-Absolute conversion
+    # ---------------------------------------------------------------------
+    def to_absolute(self, action: dict[str, Any]) -> dict[str, Any]:
         """
-        for side in ["left", "right"]:
-            if side not in self.finger_kinematics:
-                continue
-            
-            # Check if action already contains direct finger joint commands
-            joint_names = ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]
-            has_direct_joints = any(f"{side}_fingers.{joint}" in action for joint in joint_names)
-            
-            if has_direct_joints:
-                # Action contains direct joint commands (from policy) - skip IK computation
-                continue
-                
-            # Extract finger tip positions as list of [x,y,z] positions (from teleoperation)
-            finger_positions = []
-            finger_tip_keys = []  # Keep track of keys to remove later
-            
-            for finger in ["thumb", "index", "middle", "ring", "pinky"]:
-                keys = [f"{side}_fingers.{finger}.{coord}" for coord in ["x", "y", "z"]]
-                if all(key in action for key in keys):
-                    finger_positions.append([action[key] for key in keys])
-                    finger_tip_keys.extend(keys)  # Store keys for removal
-            
-            if len(finger_positions) == 0:
-                # No finger data in action - skip
-                continue
-                
-            assert len(finger_positions) == 5  # All 5 fingers for teleoperation
-            # Use Manipulator to solve IK for finger tip positions
-            self.finger_kinematics[side].inverse_kinematic(finger_positions)
-            # Get the computed joint angles
-            joint_angles = self.finger_kinematics[side].get_driver_value()
-            for i, joint in enumerate(joint_names):
-                if i < len(joint_angles):
-                    action[f"{side}_fingers.{joint}"] = joint_angles[i] * 180 / np.pi
-            
-            # Remove the finger tip position keys from action
-            for key in finger_tip_keys:
-                action.pop(key, None)
-        
-        return action
+        Convert an input action dictionary interpreted as relative deltas into
+        absolute targets using an internal accumulator initialized from encoders.
+        """
+        # TODO: handle quaternions. For now assuming their value is zero
+        abs_action: dict[str, Any] = dict(action)
+
+        for k, v in action.items():
+            base = self.acc_state[k]
+            abs_action[k] = base + v
+            self.acc_state[k] = abs_action[k]
+
+        return abs_action
+
 
     @property
     def is_connected(self) -> bool:
@@ -293,7 +243,7 @@ class ErgoCub(Robot):
     def action_features(self) -> dict[str, type]:
         """
         A dictionary describing the structure and types of the actions expected by the robot.
-        ErgoCub actions are pose commands (position + orientation) for arms and neck, plus finger positions.
+        ErgoCub actions are pose commands (position + orientation) for hands and head, plus finger positions.
         
         Returns action features in SO100-like format with dot notation.
         """

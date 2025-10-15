@@ -109,8 +109,7 @@ def main():
             "infrared": YarpCameraConfig(
                 yarp_name="depthCamera/ir:o", width=1280, height=720, fps=30
             ),
-        },
-        encoders_control_boards=["head", "left_arm", "right_arm", "torso"],
+        }
     )
 
     # Initialize robot

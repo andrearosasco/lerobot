@@ -22,7 +22,7 @@ import numpy as np
 import yarp
 from scipy.spatial.transform import Rotation as R
 from .urdf_utils import resolve_ergocub_urdf
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.model.kinematics import RobotKinematics
 
 if TYPE_CHECKING:
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ErgoCubNeckController:
+class ErgoCubHeadController:
     """
     Controller for ergoCub neck that handles orientation commands and readings.
     Follows SO100 motor conventions but operates at orientation level.
@@ -159,11 +159,16 @@ class ErgoCubNeckController:
         T = self.kinematics_solver.forward_kinematics(full_joint_values.tolist())
         quaternion = R.from_matrix(T[:3, :3]).as_quat(canonical=True, scalar_first=True)  # [w, x, y, z]
 
-        return dict(zip(["neck.orientation.qw", "neck.orientation.qx", "neck.orientation.qy", "neck.orientation.qz"], quaternion))
+        return_dict = {"head.orientation.qw": quaternion[0].item(),
+                       "head.orientation.qx": quaternion[1].item(),
+                       "head.orientation.qy": quaternion[2].item(),
+                       "head.orientation.qz": quaternion[3].item()}
+
+        return return_dict
     
     def send_command(self, orientation: np.ndarray) -> None:
         """
-        Send orientation command to the neck.
+        Send orientation command to the head.
         
         Args:
             orientation: Array [qw, qx, qy, qz] for neck orientation
@@ -188,7 +193,7 @@ class ErgoCubNeckController:
     def send_commands(self, commands: dict[str, float]) -> None:
         """Send commands from dict format."""
         # Extract neck orientation if available
-        quat_keys = ["neck.orientation.qw", "neck.orientation.qx", "neck.orientation.qy", "neck.orientation.qz"]
+        quat_keys = ["head.orientation.qw", "head.orientation.qx", "head.orientation.qy", "head.orientation.qz"]
         if all(key in commands for key in quat_keys):
             orientation = np.array([commands[key] for key in quat_keys])
             self.send_command(orientation)
@@ -208,6 +213,6 @@ class ErgoCubNeckController:
         
         # Neck orientation (4 DOF)
         for coord in ["qw", "qx", "qy", "qz"]:
-            features[f"neck.orientation.{coord}"] = float
+            features[f"head.orientation.{coord}"] = float
         
         return features
