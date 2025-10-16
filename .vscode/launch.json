@@ -28,7 +28,7 @@
     }
     ,
     {
-      "name": "Train",
+      "name": "Train (DP)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_train.py",
@@ -38,9 +38,13 @@
       },
       "preLaunchTask": "clear-test",
       "args": [
+        "--batch_size=64",
+        "--num_workers=8",
         "--policy.type=diffusion",
-        "--policy.repo_id=steb6/train-redball",
-        "--dataset.repo_id=steb6/redball",
+        "--policy.repo_id=ar0s/dp-redball",
+        "--policy.crop_shape=null",
+        "--policy.resize_shape=[180,320]",
+        "--dataset.repo_id=HSP-IIT/redball",
         "--policy.device=cuda",
         "--output_dir=checkpoints/redball"
       ]
