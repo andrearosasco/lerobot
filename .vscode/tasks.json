@@ -19,7 +19,7 @@
     {
       "label": "clear-record",
       "type": "shell",
-      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/steb6/redball",
+      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/steb6/redball_real",
       "options": {
         "cwd": "${workspaceFolder}"
       },

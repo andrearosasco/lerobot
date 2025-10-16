@@ -70,6 +70,31 @@
         "--dataset.episode_time=60",
         "--dataset.single_task=get the ball"
       ]
+    },
+    {
+      "name": "Record Real",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_record.py",
+      "console": "integratedTerminal",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      },
+      "preLaunchTask": "clear-record",
+      "args": [
+        "--robot.type=ergocub",
+        "--robot.remote_prefix=/ergocub",
+        "--robot.local_prefix=/lerobot",
+        "--robot.cameras={ external: {\"type\": \"yarp\", \"yarp_name\": \"depthCamera/rgbImage:o\", \"width\": 1280, \"height\": 720, \"fps\": 30}}",
+        "--robot.control_boards=[head,left_hand,right_hand,fingers,torso]",
+        "--teleop.type=metaquest",
+        "--dataset.repo_id=steb6/redball_real",
+        "--dataset.num_episodes=50",
+        "--dataset.fps=10",
+        "--dataset.reset_time=3",
+        "--dataset.episode_time=10",
+        "--dataset.single_task=get the ball"
+      ]
     }
   ]
 }
