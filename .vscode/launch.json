@@ -38,13 +38,15 @@
       },
       "preLaunchTask": "clear-test",
       "args": [
-        "--batch_size=64",
-        "--num_workers=8",
+        "--batch_size=8",
+        "--num_workers=4",
         "--policy.type=diffusion",
         "--policy.repo_id=ar0s/dp-redball",
         "--policy.crop_shape=null",
-        "--policy.resize_shape=[180,320]",
-        "--dataset.repo_id=HSP-IIT/redball",
+        "--policy.resize_shape=[240,320]",
+        "--policy.noise_scheduler_type=DDIM",
+        "--policy.num_train_timesteps=100",
+        "--dataset.repo_id=HSP-IIT/redball_sim",
         "--policy.device=cuda",
         "--output_dir=checkpoints/redball"
       ]
