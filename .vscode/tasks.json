@@ -17,9 +17,23 @@
     }
     ,
     {
-      "label": "clear-hf-cache",
+      "label": "clear-record",
       "type": "shell",
       "command": "rm -rf /home/sberti/.cache/huggingface/lerobot/steb6/eval_redballppp",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "clear-test",
+      "type": "shell",
+      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/ar0s/eval_redball_sim",
       "options": {
         "cwd": "${workspaceFolder}"
       },

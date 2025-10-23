@@ -217,7 +217,11 @@ class ImageCropResizeProcessorStep(ObservationProcessorStep):
                 crop_params = self.crop_params_dict[key]
                 image = F.crop(image, *crop_params)
             if self.resize_size is not None:
+                # Handle any tensor shape by flattening leading dimensions
+                original_shape = image.shape
+                image = image.view(-1, *original_shape[-3:])  # Flatten to (-1, C, H, W)
                 image = F.resize(image, self.resize_size)
+                image = image.view(*original_shape[:-2], *self.resize_size)  # Restore original shape with new H,W
                 image = image.clamp(0.0, 1.0)
             new_observation[key] = image.to(device)
 
