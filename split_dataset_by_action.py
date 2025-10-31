@@ -10,6 +10,8 @@ Behavior (assumptions):
 - The script streams each frame (as a JPEG, base64 encoded) over a YARP output
   port (default: '/splitter/video:o') inside a Bottle with fields:
       [ int(frame_index) , string(jpeg_base64) ]
+    Each episode will contain only frames assigned to the label and will have the
+    episode task equal to the label string.
 - The external action recognition module must listen to the video port and reply
   labels by publishing to a label port (remote) which will be connected to the
   local label input port (default: '/splitter/labels:i'). The external module
@@ -183,17 +185,14 @@ def split_dataset_by_label(ds: Dataset, labels: list[str], output_prefix: str, p
 
 
 def split_one_episode_by_labels(src_ds: LeRobotDataset, labels: list[str], output_prefix: str, push_to_hub: bool = False, hf_token: str | None = None) -> dict[str, str]:
-    """Split a single-episode LeRobotDataset into one episode per label.
+    """Split a single-episode LeRobotDataset into one dataset that contains K episodes (one per label).
 
-    Args:
-        src_ds: LeRobotDataset expected to contain exactly one episode.
-        labels: list of len N with a label (str) or None for each frame.
-        output_prefix: base directory/prefix to write per-label datasets.
-        push_to_hub: whether to upload resulting datasets to HF Hub.
-        hf_token: HF token for upload (optional).
+    The resulting dataset is written under `output_prefix` (a single folder). Each label becomes one
+    episode (episode_index = 0..K-1). Episode videos (if present) are encoded per-episode as H.264
+    files and referenced from the episode metadata.
 
-    Returns:
-        mapping label -> output_dir (string)
+    Returns a dict with a single entry {'dataset': out_dir} for compatibility with the original
+    return type.
     """
     if src_ds.meta.total_episodes != 1:
         raise ValueError("Source dataset must contain exactly one episode")
@@ -201,7 +200,6 @@ def split_one_episode_by_labels(src_ds: LeRobotDataset, labels: list[str], outpu
     hf = src_ds.hf_dataset
     if hf is None:
         raise RuntimeError("Source LeRobotDataset has no hf_dataset loaded")
-    
     # Since AR module has window of length 16, we do the following
     # tapullo per i None
     # test = []
@@ -228,94 +226,105 @@ def split_one_episode_by_labels(src_ds: LeRobotDataset, labels: list[str], outpu
     if len(labels) != len(hf):
         raise ValueError("Labels length must match number of frames in dataset")
 
+    # Build indices by label preserving order of first appearance
     indices_by_label: dict[str, list[int]] = defaultdict(list)
+    labels_order: list[str] = []
     for i, lbl in enumerate(labels):
         if lbl is None:
             continue
+        if lbl not in indices_by_label:
+            labels_order.append(lbl)
         indices_by_label[lbl].append(i)
 
-    results = {}
+    if len(labels_order) == 0:
+        raise ValueError("No labels found to split into episodes")
 
     src_meta = src_ds.meta
 
+    # Prepare single output directory
+    out_dir = Path(str(output_prefix))
+    repo_id = out_dir.name
 
-    for lbl, idxs in indices_by_label.items():
-        if len(idxs) == 0:
-            results[lbl] = str(output_prefix) + f"-{lbl} (empty)"
-            continue
+    new_meta = LeRobotDatasetMetadata.create(
+        repo_id=repo_id,
+        fps=src_meta.fps,
+        features=src_meta.features,
+        robot_type=src_meta.robot_type,
+        root=out_dir,
+        use_videos=len(src_meta.video_keys) > 0,
+    )
 
-        out_dir = Path(f"{output_prefix}-{lbl}")
-
-        # build dataframe from hf subset
+    # Build a combined dataframe where each label becomes a distinct episode
+    frames_list = []
+    global_index = 0
+    episode_lengths = []
+    for ep_idx, lbl in enumerate(labels_order):
+        idxs = indices_by_label[lbl]
         sub = hf.select(idxs)
         try:
             df = sub.to_pandas()
         except Exception:
-            # fallback: materialize into list of dicts
             df = pd.DataFrame(list(sub))
-
         df = df.reset_index(drop=True)
-        df["episode_index"] = 0
+        df["episode_index"] = ep_idx
         df["frame_index"] = list(range(len(df)))
-        df["index"] = list(range(len(df)))
+        df["index"] = list(range(global_index, global_index + len(df)))
         df["timestamp"] = df["frame_index"].astype(float) / float(src_meta.fps)
+        # task_index points to the task (we'll store tasks in the same order as labels_order)
+        df["task_index"] = ep_idx
+        frames_list.append(df)
+        global_index += len(df)
+        episode_lengths.append(len(df))
 
-        # create metadata
-        repo_id = out_dir.name
-        new_meta = LeRobotDatasetMetadata.create(
-            repo_id=repo_id,
-            fps=src_meta.fps,
-            features=src_meta.features,
-            robot_type=src_meta.robot_type,
-            root=out_dir,
-            use_videos=len(src_meta.video_keys) > 0,
-        )
+    full_df = pd.concat(frames_list, ignore_index=True)
 
-        # write parquet file
-        data_path = out_dir / DEFAULT_DATA_PATH.format(chunk_index=0, file_index=0)
-        data_path.parent.mkdir(parents=True, exist_ok=True)
-        _write_parquet(df, data_path, new_meta)
+    # Write single parquet file
+    data_path = out_dir / DEFAULT_DATA_PATH.format(chunk_index=0, file_index=0)
+    data_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_parquet(full_df, data_path, new_meta)
 
-        # tasks: copy relevant tasks from source if present
-        if "task_index" in df.columns and src_meta.tasks is not None:
-            task_indices = sorted(set(df["task_index"].dropna().astype(int).tolist()))
-            task_names = [src_meta.tasks.iloc[idx].name for idx in task_indices]
-            if len(task_names) > 0:
-                new_meta.save_episode_tasks(task_names)
-        # If the source dataset had videos, encode per-label videos that only contain the selected frames.
+    # Save tasks (labels as tasks)
+    new_meta.save_episode_tasks(labels_order)
+
+    # Encode per-episode videos and write episode metadata
+    total_frames = 0
+    for ep_idx, lbl in enumerate(labels_order):
+        ep_len = episode_lengths[ep_idx]
+
+        # default episode metadata (data indices point to the single parquet file)
+        ep_meta = {
+            "data/chunk_index": 0,
+            "data/file_index": 0,
+            "dataset_from_index": int(full_df[full_df["episode_index"] == ep_idx]["index"].min()),
+            "dataset_to_index": int(full_df[full_df["episode_index"] == ep_idx]["index"].max() + 1),
+        }
+
         video_fields = {}
         if src_meta.video_keys:
-            # helper: encode per-label video for each video_key using repository helpers and return episode video metadata fields
-            def _encode_label_videos(src_ds: LeRobotDataset, dst_meta: LeRobotDatasetMetadata, selected_indices: list[int]) -> dict:
-                fields: dict = {}
-                if len(selected_indices) == 0:
-                    return fields
+            src_ep = src_ds.meta.episodes[0]
+            ep_start = int(src_ep.get("dataset_from_index", 0))
+            for video_key in src_meta.video_keys:
+                from_ts = float(src_ep.get(f"videos/{video_key}/from_timestamp", 0.0))
+                vinfo = src_ds.meta.info.get("features", {}).get(video_key, {}).get("info", {}) or {}
+                video_fps = float(vinfo.get("video.fps", src_meta.fps))
 
-                # source episode metadata (assumes single episode src)
-                src_ep = src_ds.meta.episodes[0]
-                ep_start = int(src_ep.get("dataset_from_index", 0))
-                dataset_fps = float(src_ds.meta.fps)
+                src_video_path = src_ds.root / src_ds.meta.get_video_file_path(0, video_key)
+                if not src_video_path.exists():
+                    continue
 
-                for video_key in src_ds.meta.video_keys:
-                    from_ts = float(src_ep.get(f"videos/{video_key}/from_timestamp", 0.0))
-                    # video fps from info if present
-                    vinfo = src_ds.meta.info.get("features", {}).get(video_key, {}).get("info", {}) or {}
-                    video_fps = float(vinfo.get("video.fps", dataset_fps))
+                # timestamps for this episode relative to source video
+                idxs = indices_by_label[lbl]
+                timestamps = [from_ts + ((int(idx) - ep_start) / float(src_meta.fps)) for idx in idxs]
+                print(f"Encoding video for episode {ep_idx} label '{lbl}' with {len(timestamps)} frames from {src_video_path}")
 
-                    src_video_path = src_ds.root / src_ds.meta.get_video_file_path(0, video_key)
-                    if not src_video_path.exists():
-                        continue
-
-                    # timestamps (seconds) for selected frames relative to video
-                    timestamps = [from_ts + ((int(idx) - ep_start) / dataset_fps) for idx in selected_indices]
-
-                    if len(timestamps) > 1000:
-                        print(f"Warning: encoding video for label '{lbl}' with {len(timestamps)} frames crashes.", file=sys.stderr)
-
-                    # decode frames using repo helper (torchcodec/pyav)
+                # decode frames and materialize to PNGs
+                try:
                     frames_t = decode_video_frames(src_video_path, timestamps, src_ds.tolerance_s, backend=src_ds.video_backend)
+                except Exception:
+                    frames_t = []
 
-                    # materialize frames as PNGs into a temp dir
+                imgs_dir = None
+                if len(frames_t) > 0:
                     imgs_dir = Path(tempfile.mkdtemp())
                     for i, frame in enumerate(frames_t):
                         arr = (frame.mul(255).clamp(0, 255).permute(1, 2, 0).cpu().numpy()).astype("uint8")
@@ -323,60 +332,50 @@ def split_one_episode_by_labels(src_ds: LeRobotDataset, labels: list[str], outpu
                         fname = imgs_dir / f"frame-{i:06d}.png"
                         img.save(fname, format="PNG")
 
-                    # destination video path in dst_meta
-                    dst_rel = dst_meta.video_path.format(video_key=video_key, chunk_index=0, file_index=0)
-                    dst_video_path = dst_meta.root / dst_rel
+                    # destination video path per episode (one file per episode)
+                    dst_rel = new_meta.video_path.format(video_key=video_key, chunk_index=0, file_index=ep_idx)
+                    dst_video_path = new_meta.root / dst_rel
                     dst_video_path.parent.mkdir(parents=True, exist_ok=True)
 
-                    # encode using repo helper with H.264 for broad compatibility
                     encode_video_frames(imgs_dir, dst_video_path, fps=int(video_fps), vcodec="h264", pix_fmt="yuv420p", overwrite=True)
 
                     duration = len(frames_t) / float(video_fps) if video_fps > 0 else 0.0
-                    fields[f"videos/{video_key}/chunk_index"] = 0
-                    fields[f"videos/{video_key}/file_index"] = 0
-                    fields[f"videos/{video_key}/from_timestamp"] = 0.0
-                    fields[f"videos/{video_key}/to_timestamp"] = duration
+                    video_fields[f"videos/{video_key}/chunk_index"] = 0
+                    video_fields[f"videos/{video_key}/file_index"] = ep_idx
+                    video_fields[f"videos/{video_key}/from_timestamp"] = 0.0
+                    video_fields[f"videos/{video_key}/to_timestamp"] = duration
 
-                    # cleanup temp images
+                if imgs_dir is not None:
                     try:
                         shutil.rmtree(str(imgs_dir))
                     except Exception:
                         pass
 
-                return fields
-
-            try:
-                video_fields = _encode_label_videos(src_ds, new_meta, idxs)
-            except Exception:
-                video_fields = {}
-
-        # write episode metadata (include video fields if any)
-        ep_meta = {
-            "data/chunk_index": 0,
-            "data/file_index": 0,
-            "dataset_from_index": 0,
-            "dataset_to_index": len(df),
-        }
-        episode_dict = {"episode_index": 0, "tasks": list(new_meta.tasks.index) if new_meta.tasks is not None else [], "length": len(df)}
+        episode_dict = {"episode_index": ep_idx, "tasks": [labels_order[ep_idx]], "length": ep_len}
         episode_dict.update(ep_meta)
         episode_dict.update(video_fields)
         new_meta._save_episode_metadata(episode_dict)
-        new_meta._close_writer()
 
-        new_meta.info.update({"total_episodes": 1, "total_frames": len(df), "total_tasks": len(new_meta.tasks) if new_meta.tasks is not None else 0, "splits": {"train": "0:1"}})
-        write_info(new_meta.info, new_meta.root)
+        total_frames += ep_len
 
-        if push_to_hub:
-            try:
-                hub = HfApi()
-                repo_id = "steb6/" + repo_id.replace("-", "_").replace(" ", "_")
-                hub.create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True)
-                hub.upload_folder(repo_id=repo_id, folder_path=str(out_dir), repo_type="dataset")
-                results[lbl] = str(out_dir) + " (pushed)"
-            except Exception as e:
-                results[lbl] = str(out_dir) + f" (push failed: {e})"
-        else:
-            results[lbl] = str(out_dir)
+    # finalize episode metadata and info
+    new_meta._close_writer()
+    new_meta.info.update({"total_episodes": len(labels_order), "total_frames": total_frames, "total_tasks": len(new_meta.tasks) if new_meta.tasks is not None else 0, "splits": {"train": f"0:{len(labels_order)}"}})
+    write_info(new_meta.info, new_meta.root)
+
+    # Optionally push whole dataset to HF hub
+    results = {}
+    if push_to_hub:
+        try:
+            hub = HfApi()
+            repo_id = "steb6/" + repo_id.replace("-", "_").replace(" ", "_")
+            hub.create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True)
+            hub.upload_folder(repo_id=repo_id, folder_path=str(out_dir), repo_type="dataset")
+            results["dataset"] = str(out_dir) + " (pushed)"
+        except Exception as e:
+            results["dataset"] = str(out_dir) + f" (push failed: {e})"
+    else:
+        results["dataset"] = str(out_dir)
 
     return results
 
