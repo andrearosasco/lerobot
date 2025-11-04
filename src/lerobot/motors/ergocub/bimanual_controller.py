@@ -17,6 +17,8 @@
 import logging
 import time
 from typing import Dict
+import threading
+from concurrent.futures import ThreadPoolExecutor, Future
 
 import numpy as np
 import yarp
@@ -45,6 +47,8 @@ class ErgoCubBimanualController:
             local_prefix: Local YARP prefix (e.g., "/lerobot/session_id")
             use_left_hand: Whether to control left hand
             use_right_hand: Whether to control right hand
+            pd_rate_hz: Streaming frequency for Position Direct (e.g., 100 Hz)
+            traj_duration_s: Nominal duration of generated trajectories to reach a target
         """
         self.remote_prefix = remote_prefix
         self.local_prefix = local_prefix
@@ -63,26 +67,28 @@ class ErgoCubBimanualController:
         # Initial state (q, dq)
         q0  = np.zeros(len(cfg.right_joints) + len(cfg.left_joints) + len(cfg.torso_joints))
         dq0 = np.zeros(len(cfg.right_joints) + len(cfg.left_joints) + len(cfg.torso_joints))
-        self.ik.reset(q0, dq0)
+        # self.ik.reset(q0, dq0)
         
         # YARP ports
         self.left_encoders_port = yarp.BufferedPortBottle()
         self.right_encoders_port = yarp.BufferedPortBottle()
         self.torso_encoders_port = yarp.BufferedPortBottle()
         # use a control board remapper to control the joints
-<<<<<<< HEAD
         # prepare mapping from joint name -> index in the single remapped controlboard
         self.joint_names = cfg.right_joints + cfg.left_joints + cfg.torso_joints
         # placeholders for YARP driver / interfaces (opened in connect)
         self._driver = None
         self._ipos = None
+        # Use Position Direct mode interfaces
+        self._iposd = None
+        self._icmd = None
+        self._ienc = None
 
-=======
-        joints = cfg.left_joints.tolist() + cfg.right_joints.tolist() + cfg.torso_joints.tolist()
-
-        
->>>>>>> 6abeb6c (Before to add joints actuation for bimanual)
         self._is_connected = False
+
+        # Executor-based short streaming task management
+        self._pd_executor: ThreadPoolExecutor | None = None
+        self._last_future: Future | None = None
         
         # Initialize kinematics solvers for both hands if needed
         self.kinematics_solvers = {}
@@ -96,6 +102,19 @@ class ErgoCubBimanualController:
             if use_right_hand:
                 right_joint_names = ["torso_roll", "torso_pitch", "torso_yaw", "r_shoulder_pitch", "r_shoulder_roll", "r_shoulder_yaw", "r_elbow", "r_wrist_yaw", "r_wrist_roll", "r_wrist_pitch"]
                 self.kinematics_solvers["right"] = RobotKinematics(urdf_file, "r_hand_palm", right_joint_names)
+
+        # Persistent PositionDirect publisher state (created on connect)
+        self._pd_thread: threading.Thread | None = None
+        self._pd_stop_evt = threading.Event()
+        self._pd_new_goal_evt = threading.Event()
+        self._pd_lock = threading.Lock()
+        self._pd_dt = 0.01  # 100 Hz by default
+        self._nominal_vel = 1.0  # rad/s cap for planning
+        self._min_traj_T = 0.25
+        self._max_traj_T = 1.0
+        self._active_traj: dict | None = None  # {q0, q1, T, t0}
+        self._last_q_ref: np.ndarray | None = None
+        self._q_goal: np.ndarray | None = None
     
     @property
     def is_connected(self) -> bool:
@@ -106,20 +125,6 @@ class ErgoCubBimanualController:
         if self._is_connected:
             raise DeviceAlreadyConnectedError("ErgoCubBimanualController already connected")
         
-<<<<<<< HEAD
-=======
-        # # Open RPC port for bimanual commands
-        # bimanual_cmd_local = f"{self.local_prefix}/bimanual/rpc:o"
-        # if not self.bimanual_cmd_port.open(bimanual_cmd_local):
-        #     raise ConnectionError(f"Failed to open bimanual RPC port {bimanual_cmd_local}")
-        
-        # # Connect to bimanual cartesian controller
-        # bimanual_cmd_remote = "/mc-ergocub-cartesian-bimanual/rpc:i"
-        # while not yarp.Network.connect(bimanual_cmd_local, bimanual_cmd_remote):
-        #     logger.warning(f"Failed to connect {bimanual_cmd_local} -> {bimanual_cmd_remote}, retrying...")
-        #     time.sleep(1)
-        
->>>>>>> 6abeb6c (Before to add joints actuation for bimanual)
         # Connect encoder ports for both hands
         if self.use_left_hand:
             left_encoders_local = f"{self.local_prefix}/bimanual/left_encoders:i"
@@ -167,14 +172,32 @@ class ErgoCubBimanualController:
             axesNames_list.addString(joint)
         props.put("axesNames", axesNames.get(0))
         self._driver = yarp.PolyDriver()
-        if not self._driver.open(props):
-            raise ConnectionError(f"Failed to open PolyDriver for controlboard remapper")
-        # Query position control interface
-        self._ipos = self._driver.viewIPositionControl()
-        if self._ipos is None:
-            raise ConnectionError("IPositionControl interface not available on remapper driver")
+        self._driver.open(props)
+
+        self._iposd = self._driver.viewIPositionDirect()
+        self._icmd = self._driver.viewIControlMode()
+        self._ienc = self._driver.viewIEncoders()
+
+        # Set all joints to POSITION_DIRECT mode
+        for j in range(len(self.joint_names)):
+            self._icmd.setControlMode(j, yarp.VOCAB_CM_POSITION_DIRECT)
+
+        # Replace short-burst executor with persistent streaming thread
+        self._pd_executor = None
+        self._last_future = None
+
+        # Initialize last reference to current encoders and start PD loop
+        self._last_q_ref = self._read_current_joints()
+        self._pd_stop_evt.clear()
+        self._pd_thread = threading.Thread(target=self._pd_loop, name="pd-stream", daemon=True)
+        self._pd_thread.start()
 
         self._is_connected = True
+        self.initial_position = np.array([-5.15586422e-01,  5.15563259e-01,  8.66521676e-04,  7.84699903e-01,
+                                           2.41915094e-06,  2.11463754e-05, -1.72567871e-03, -5.15615291e-01,
+                                           5.15524823e-01,  8.81244420e-04,  7.84702351e-01,  6.89402045e-07,
+                                           2.80294707e-05, -1.71659003e-03, -4.78971553e-03,  1.54077055e-02,
+                                           7.14345317e-04])
         logger.info("ErgoCubBimanualController connected")
 
     
@@ -182,8 +205,17 @@ class ErgoCubBimanualController:
         """Disconnect from YARP ports."""
         if not self.is_connected:
             raise DeviceNotConnectedError("ErgoCubBimanualController not connected")
-        
-        self.bimanual_cmd_port.close()
+
+        # Stop PD loop first
+        if self._pd_thread is not None:
+            self._pd_stop_evt.set()
+            self._pd_new_goal_evt.set()
+            try:
+                self._pd_thread.join(timeout=2.0)
+            finally:
+                self._pd_thread = None
+
+        # Close input ports
         if self.use_left_hand:
             self.left_encoders_port.close()
         if self.use_right_hand:
@@ -192,14 +224,16 @@ class ErgoCubBimanualController:
         
         self._is_connected = False
         logger.info("ErgoCubBimanualController disconnected")
+        # Shut down executor to avoid further streaming (kept for backward compatibility)
+        if self._pd_executor is not None:
+            try:
+                self._pd_executor.shutdown(wait=False, cancel_futures=True)
+            finally:
+                self._pd_executor = None
+                self._last_future = None
         # Close driver if opened
         if self._driver is not None:
-            try:
-                self._driver.close()
-            except Exception:
-                pass
-            self._driver = None
-            self._ipos = None
+            self._driver.close()
     
     def read_current_state(self) -> Dict[str, float]:
         """Read current state for both hands."""
@@ -264,10 +298,10 @@ class ErgoCubBimanualController:
         return state
     
     def send_command(self, q: np.ndarray = None) -> None:
-        """Send joint positions to the controlboard remapper.
+        """Set a new target joint vector for the persistent Position Direct streaming loop.
 
         q should be a 1D numpy array with length equal to the number of joints in
-        `self.joint_names` (left + right + torso order used above).
+        `self.joint_names` (left + right + torso order used above). Units: radians.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError("ErgoCubBimanualController not connected")
@@ -276,21 +310,11 @@ class ErgoCubBimanualController:
         if q.size != len(self.joint_names):
             raise ValueError(f"Expected q of length {len(self.joint_names)}, got {q.size}")
 
-        # If position control interface is available, send all positions
-        if self._ipos is not None:
-            try:
-                pos = yarp.Vector()
-                for i in range(len(self.joint_names)):
-                    pos.push_back(np.degrees(q[i]))  # convert to degrees
-                    # pos.push_back(q[i])
-                ok = self._ipos.positionMove(pos.data())
-                if not ok:
-                    raise ConnectionError("IPositionControl.positionMove reported failure")
-            except Exception as e:
-                raise ConnectionError("Failed to send positions via IPositionControl: %s", e)
-        else:
-            # Fallback: log that positions would be sent
-            raise ConnectionError("No IPositionControl available; would send positions: %s", q.tolist())
+        # Publish goal for the PD loop; preempt any ongoing trajectory
+        with self._pd_lock:
+            self._q_goal = np.asarray(q, dtype=float).copy()
+        self._pd_new_goal_evt.set()
+        # Non-blocking; the PD thread handles interpolation and timing
 
     
     def send_commands(self, commands: dict[str, float]) -> None:
@@ -318,13 +342,15 @@ class ErgoCubBimanualController:
                     pose = np.array([hand_cmds[key] for key in pos_keys + quat_keys])
                     if hand_name == "left":
                         left_pose.pos = pose[:3]
-                        left_pose.quat = np.r_[pose[4:7], pose[3]]
+                        left_pose.quat = pose[3:]
                     else:
                         right_pose.pos = pose[:3]
-                        right_pose.quat = np.r_[pose[4:7], pose[3]]
+                        right_pose.quat = pose[3:]
 
         # Compute inverse kinematics and send commands
-        q = self.ik.solve_ik(right_pose=right_pose, left_pose=left_pose)
+        # Provide current joints (radians) to IK, as required
+        q_curr = self._read_current_joints()
+        q = self.ik.solve_ik(right_pose=right_pose, left_pose=left_pose, q=q_curr)
         self.send_command(q)
         
         # Handle finger commands (bimanual controller doesn't actually control fingers, 
@@ -337,12 +363,7 @@ class ErgoCubBimanualController:
 
     def reset(self) -> None:
         """Reset the bimanual controller"""
-<<<<<<< HEAD
-        self.send_command(np.array([0.0]*len(self.joint_names)))
-=======
-        # TODO implement reset for bimanual and fingers
-        pass
->>>>>>> 6abeb6c (Before to add joints actuation for bimanual)
+        self.send_command(self.initial_position)
 
     @property
     def motor_features(self) -> dict[str, type]:
@@ -364,3 +385,155 @@ class ErgoCubBimanualController:
                 features[f"right_hand.orientation.{coord}"] = float
         
         return features
+
+    # Internal: read current joint positions (radians) from remapper encoders
+    def _read_current_joints(self) -> np.ndarray:
+        n_axes = len(self.joint_names)
+        vec = yarp.Vector(n_axes)
+        ok = self._ienc.getEncoders(vec.data())
+        if not ok:
+            return np.zeros(n_axes, dtype=float)
+        return np.radians(np.array([vec.get(i) for i in range(n_axes)], dtype=float))
+
+    def _min_jerk_spaces(self, N: int, T: float):
+        """Generates a 1-D minimum-jerk trajectory scalar from 0 to 1 in N steps over T seconds."""
+        assert N > 1, "Number of planning steps must be larger than 1."
+        t_traj = np.linspace(0.0, 1.0, N)
+        p_traj = 10 * t_traj**3 - 15 * t_traj**4 + 6 * t_traj**5
+        pd_traj = (30 * t_traj**2 - 60 * t_traj**3 + 30 * t_traj**4) / T
+        pdd_traj = (60 * t_traj - 180 * t_traj**2 + 120 * t_traj**3) / (T**2)
+        return p_traj, pd_traj, pdd_traj
+
+    def _generate_joint_space_min_jerk(self, start: np.ndarray, goal: np.ndarray, time_to_go: float, dt: float):
+        """Primitive joint-space minimum-jerk trajectory planner (positions, velocities, accelerations)."""
+        start = np.asarray(start, dtype=float)
+        goal = np.asarray(goal, dtype=float)
+        steps = int(max(2, round(time_to_go / dt)))
+        T = steps * dt
+        p_traj, pd_traj, pdd_traj = self._min_jerk_spaces(steps, T)
+        D = goal - start
+        q_traj = start[None, :] + D[None, :] * p_traj[:, None]
+        qd_traj = D[None, :] * pd_traj[:, None]
+        qdd_traj = D[None, :] * pdd_traj[:, None]
+        waypoints = [
+            {
+                "time_from_start": i * dt,
+                "position": q_traj[i, :],
+                "velocity": qd_traj[i, :],
+                "acceleration": qdd_traj[i, :],
+            }
+            for i in range(steps)
+        ]
+        return waypoints
+
+    # Persistent PD loop and helpers
+    def _plan_traj(self, q0: np.ndarray, q1: np.ndarray) -> dict:
+        D = np.asarray(q1, dtype=float) - np.asarray(q0, dtype=float)
+        max_delta = float(np.max(np.abs(D))) if D.size > 0 else 0.0
+        # Duration based on per-joint max delta and nominal velocity
+        T = max(self._min_traj_T, min(self._max_traj_T, max_delta / max(self._nominal_vel, 1e-6)))
+        return {"q0": np.asarray(q0, float), "q1": np.asarray(q1, float), "T": T, "t0": time.perf_counter()}
+
+    def _pd_loop(self) -> None:
+        if self._iposd is None:
+            return
+        n_axes = len(self.joint_names)
+        pos = yarp.Vector(n_axes)
+        # Timing init
+        dt = float(self._pd_dt)
+        next_t = time.perf_counter()
+        overruns = 0
+        # Local copy of last reference
+        q_ref = np.array(self._last_q_ref if self._last_q_ref is not None else np.zeros(n_axes), dtype=float)
+
+        # Min-jerk scalar function
+        def jerk_profile(s: float) -> float:
+            return 10.0 * s**3 - 15.0 * s**4 + 6.0 * s**5
+
+        while not self._pd_stop_evt.is_set():
+            now = time.perf_counter()
+            # Handle new goal (preempt)
+            if self._pd_new_goal_evt.is_set():
+                self._pd_new_goal_evt.clear()
+                with self._pd_lock:
+                    q_goal = None if self._q_goal is None else self._q_goal.copy()
+                if q_goal is not None:
+                    # Use current encoders for start to reduce jumps
+                    q0 = self._read_current_joints()
+                    self._active_traj = self._plan_traj(q0, q_goal)
+
+            # Update current reference
+            if self._active_traj is not None:
+                T = self._active_traj["T"]
+                t0 = self._active_traj["t0"]
+                s = (now - t0) / T if T > 0 else 1.0
+                if s >= 1.0:
+                    q_ref = self._active_traj["q1"].copy()
+                    self._active_traj = None
+                else:
+                    s = max(0.0, min(1.0, s))
+                    p = jerk_profile(s)
+                    q_ref = self._active_traj["q0"] + p * (self._active_traj["q1"] - self._active_traj["q0"])
+            # else: hold last q_ref
+
+            # Send command (degrees)
+            for j in range(n_axes):
+                pos.set(j, float(np.degrees(q_ref[j])))
+            self._iposd.setPositions(pos.data())
+
+            # Hybrid sleep + short spin to target next tick
+            next_t += dt
+            now2 = time.perf_counter()
+            sleep_dur = next_t - now2 - 0.001  # leave ~1ms for spin
+            if sleep_dur > 0:
+                try:
+                    time.sleep(sleep_dur)
+                except Exception:
+                    pass
+            # short spin for precision
+            while True:
+                now3 = time.perf_counter()
+                if now3 >= next_t:
+                    break
+            # Detect large overruns (diagnostics)
+            lag = now3 - next_t
+            if lag > 0.01:  # >10ms late
+                overruns += 1
+                if overruns % 50 == 0:
+                    logger.debug(f"PD loop overrun count={overruns}, last lag={lag*1000:.1f} ms")
+
+        # Exit: optionally hold last reference once more
+        try:
+            for j in range(n_axes):
+                pos.set(j, float(np.degrees(q_ref[j])))
+            self._iposd.setPositions(pos.data())
+        except Exception:
+            pass
+
+    # Legacy short-burst helper retained for reference but no longer used by send_command
+    def _stream_positions(self, q_target, T, dt) -> None:
+        """Run a short non-blocking stream of minimum-jerk interpolated joint positions at fixed rate.
+        Kept for backward compatibility; prefer the persistent PD loop.
+        """
+        if not self.is_connected or self._iposd is None:
+            return
+        q0 = self._read_current_joints()
+        q_goal = np.asarray(q_target, dtype=float)
+        n_axes = len(self.joint_names)
+        waypoints = self._generate_joint_space_min_jerk(q0, q_goal, T, dt)
+        pos = yarp.Vector(n_axes)
+        t0 = time.perf_counter()
+        for i, wp in enumerate(waypoints, start=1):
+            qk = wp["position"]
+            for j in range(n_axes):
+                pos.set(j, float(np.degrees(qk[j])))
+            self._iposd.setPositions(pos.data())
+            target_t = t0 + i * dt
+            # Hybrid timing even here
+            now = time.perf_counter()
+            sleep_dur = target_t - now - 0.001
+            if sleep_dur > 0:
+                time.sleep(sleep_dur)
+            while time.perf_counter() < target_t:
+                pass
+        # No print() to avoid I/O jitter

@@ -9,7 +9,7 @@ from clearconf import BaseConfig, Hidden
 
 class Config(BaseConfig):
     # Names and frames
-    urdf: str = "/home/sberti/.local/share/mamba/envs/metaCub/share/ergoCub/robots/ergoCubGazeboV1_1/model.urdf"  # yarp.ResourceFinder().findFileByName('model.urdf')
+    urdf: str = yarp.ResourceFinder().findFileByName('model.urdf')
     right_joints: List[str] = [
         "r_shoulder_pitch",
         "r_shoulder_roll",

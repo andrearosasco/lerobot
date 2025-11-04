@@ -19,7 +19,7 @@
     {
       "label": "clear-record",
       "type": "shell",
-      "command": "rm -rf /home/sberti/.cache/huggingface/lerobot/steb6/eval_redballppp",
+      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/steb6/test",
       "options": {
         "cwd": "${workspaceFolder}"
       },
