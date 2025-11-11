@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import os
+os.environ['RERUN']="off"
 import logging
 import uuid
 from functools import cached_property
@@ -26,6 +27,9 @@ from lerobot.cameras import make_cameras_from_configs
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors.ergocub import ErgoCubMotorsBus
 from lerobot.robots.robot import Robot
+
+import rerun as rr
+from scipy.spatial.transform import Rotation as R
 
 from .configuration_ergocub import ErgoCubConfig
 from .safety_utils import HandSafetyChecker
@@ -52,7 +56,7 @@ class ErgoCub(Robot):
         self.acc_state = None
 
         # Initialize safety checker
-        self.safety_checker = HandSafetyChecker(position_tolerance=0.5)
+        self.safety_checker = HandSafetyChecker(position_tolerance=0.15)
         
 
         yarp.Network.init()
@@ -70,8 +74,13 @@ class ErgoCub(Robot):
             remote_prefix=config.remote_prefix,
             local_prefix=f"{config.local_prefix}/{self.session_id}",
             control_boards=config.control_boards
-            
         )
+
+        rid = uuid.uuid4()
+        rr.rid = rid
+        self.rec = rr.RecordingStream(application_id="metacub_dashboard", recording_id=rr.rid)
+        rr.spawn(recording=self.rec, memory_limit="50%")
+        self.rec.connect_grpc()
 
     def connect(self, calibrate: bool = True):
         """
@@ -154,14 +163,16 @@ class ErgoCub(Robot):
         hands_to_check = [side for side in ["left", "right"] if f"{side}_hand" in self.config.control_boards]
 
         current_state = self.bus.read_state()
+        self.rec.log('targets/left_hand', rr.Transform3D(axis_length=0.1, translation=[action[f'left_hand.position.{k}'] for k in ['x','y','z']], mat3x3=R.from_quat([action[f'left_hand.orientation.{k}'] for k in ['qx','qy','qz', 'qw']]).as_matrix()))
+        self.rec.log('targets/right_hand', rr.Transform3D(axis_length=0.1, translation=[action[f'right_hand.position.{k}'] for k in ['x','y','z']], mat3x3=R.from_quat([action[f'right_hand.orientation.{k}'] for k in ['qx','qy','qz', 'qw']]).as_matrix()))
 
         if not self.safety_checker.is_valid_action(action, hands_to_check):
             return current_state
 
-        if not self.safety_checker.check_hand_position_safety(action, current_state, hands_to_check):
-            return current_state
+        if not self.safety_checker.check_hand_position_safety(action, current_state, hands_to_check):            return current_state
 
         # Send commands via motor bus
+
         self.bus.send_commands(action)
         return action
     

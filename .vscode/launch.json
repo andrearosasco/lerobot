@@ -75,7 +75,7 @@
         "--dataset.num_episodes=100",
         "--dataset.fps=10",
         "--dataset.reset_time=1",
-        "--dataset.episode_time=60",
+        "--dataset.episode_time=6000",
         "--dataset.single_task=get the ball"
       ],
       "justMyCode": false

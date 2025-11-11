@@ -390,10 +390,10 @@ def record_loop(
         # Warn if control frequency drops below target fps
         if dt_s > target_dt_s:
             actual_fps = 1 / dt_s
-            logging.warning(
-                f"Control frequency dropped below target: {actual_fps:.1f} Hz (actual) vs {fps} Hz (target). "
-                f"Loop took {dt_s*1000:.1f}ms vs target {target_dt_s*1000:.1f}ms."
-            )
+            # logging.warning(
+            #     f"Control frequency dropped below target: {actual_fps:.1f} Hz (actual) vs {fps} Hz (target). "
+            #     f"Loop took {dt_s*1000:.1f}ms vs target {target_dt_s*1000:.1f}ms."
+            # )
         
         busy_wait(target_dt_s - dt_s)
 

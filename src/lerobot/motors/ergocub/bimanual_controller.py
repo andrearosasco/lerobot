@@ -27,7 +27,17 @@ from .urdf_utils import resolve_ergocub_urdf
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.model.kinematics import RobotKinematics
 from pysquale import BimanualIK, PoseInput
+import pinocchio as pin
+import pink
+from pink import solve_ik
+from pink.tasks import FrameTask, PostureTask
+from pink.utils import custom_configuration_vector, get_joint_idx
 from lerobot.motors.ergocub.config_real import Config as cfg
+
+import rerun as rr
+from uuid import uuid4
+from urdf_parser_py import urdf as urdf_parser
+from lerobot.debug.urdf_logger import URDFLogger
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +66,13 @@ class ErgoCubBimanualController:
         self.use_left_hand = use_left_hand
         self.use_right_hand = use_right_hand
 
+        self.initial_position = np.array([-5.15586422e-01,  5.15563259e-01,  8.66521676e-04,  7.84699903e-01,
+                                    2.41915094e-06,  2.11463754e-05, -1.72567871e-03, -5.15615291e-01,
+                                    5.15524823e-01,  8.81244420e-04,  7.84702351e-01,  6.89402045e-07,
+                                    2.80294707e-05, -1.71659003e-03, -4.78971553e-03,  1.54077055e-02,
+                                    7.14345317e-04])
+        self.joint_names = cfg.right_joints + cfg.left_joints + cfg.torso_joints
+
         if not use_left_hand:
             cfg.left_joints = np.array([])
         if not use_right_hand:
@@ -64,10 +81,33 @@ class ErgoCubBimanualController:
         #     cfg.torso_joints= np.array([])
 
         self.ik = BimanualIK(**cfg.to_dict())
-        # Initial state (q, dq)
-        q0  = np.zeros(len(cfg.right_joints) + len(cfg.left_joints) + len(cfg.torso_joints))
-        dq0 = np.zeros(len(cfg.right_joints) + len(cfg.left_joints) + len(cfg.torso_joints))
-        # self.ik.reset(q0, dq0)
+        self.robot = pin.RobotWrapper.BuildFromURDF(
+            filename=cfg.urdf,
+            package_dirs=["."],
+            root_joint=None,
+        )
+
+        # Define tasks for the inverse kinematics solver
+        self.tasks = {}
+        
+        # A FrameTask tries to match the 6D pose of a specific frame (the hand)
+        self.tasks["left"] = FrameTask(
+            "l_hand_palm",
+            position_cost=1.0,      # High cost for position tracking
+            orientation_cost=1.0,   # High cost for orientation tracking
+        )
+       
+        self.tasks["right"] = FrameTask(
+            "r_hand_palm",
+            position_cost=1.0,
+            orientation_cost=1.0,
+        )
+
+        self.posture_task = PostureTask(
+            cost=1e-3,  # Very low cost compared to the hand tasks
+        )
+        # Set the target posture to the robot's neutral configuration defined in the URDF
+        self.posture_task.set_target(custom_configuration_vector(self.robot, **dict(zip(self.joint_names, self.initial_position))))
         
         # YARP ports
         self.left_encoders_port = yarp.BufferedPortBottle()
@@ -75,7 +115,6 @@ class ErgoCubBimanualController:
         self.torso_encoders_port = yarp.BufferedPortBottle()
         # use a control board remapper to control the joints
         # prepare mapping from joint name -> index in the single remapped controlboard
-        self.joint_names = cfg.right_joints + cfg.left_joints + cfg.torso_joints
         # placeholders for YARP driver / interfaces (opened in connect)
         self._driver = None
         self._ipos = None
@@ -92,29 +131,27 @@ class ErgoCubBimanualController:
         
         # Initialize kinematics solvers for both hands if needed
         self.kinematics_solvers = {}
-        if use_left_hand or use_right_hand:
-            urdf_file = resolve_ergocub_urdf()
+        
+        if use_left_hand:
+            left_joint_names = ["torso_roll", "torso_pitch", "torso_yaw", "l_shoulder_pitch", "l_shoulder_roll", "l_shoulder_yaw", "l_elbow", "l_wrist_yaw", "l_wrist_roll", "l_wrist_pitch"]
+            self.kinematics_solvers["left"] = RobotKinematics(cfg.urdf, "l_hand_palm", left_joint_names)
             
-            if use_left_hand:
-                left_joint_names = ["torso_roll", "torso_pitch", "torso_yaw", "l_shoulder_pitch", "l_shoulder_roll", "l_shoulder_yaw", "l_elbow", "l_wrist_yaw", "l_wrist_roll", "l_wrist_pitch"]
-                self.kinematics_solvers["left"] = RobotKinematics(urdf_file, "l_hand_palm", left_joint_names)
-                
-            if use_right_hand:
-                right_joint_names = ["torso_roll", "torso_pitch", "torso_yaw", "r_shoulder_pitch", "r_shoulder_roll", "r_shoulder_yaw", "r_elbow", "r_wrist_yaw", "r_wrist_roll", "r_wrist_pitch"]
-                self.kinematics_solvers["right"] = RobotKinematics(urdf_file, "r_hand_palm", right_joint_names)
+        if use_right_hand:
+            right_joint_names = ["torso_roll", "torso_pitch", "torso_yaw", "r_shoulder_pitch", "r_shoulder_roll", "r_shoulder_yaw", "r_elbow", "r_wrist_yaw", "r_wrist_roll", "r_wrist_pitch"]
+            self.kinematics_solvers["right"] = RobotKinematics(cfg.urdf, "r_hand_palm", right_joint_names)
 
         # Persistent PositionDirect publisher state (created on connect)
-        self._pd_thread: threading.Thread | None = None
-        self._pd_stop_evt = threading.Event()
-        self._pd_new_goal_evt = threading.Event()
-        self._pd_lock = threading.Lock()
-        self._pd_dt = 0.01  # 100 Hz by default
-        self._nominal_vel = 1.0  # rad/s cap for planning
-        self._min_traj_T = 0.25
-        self._max_traj_T = 1.0
-        self._active_traj: dict | None = None  # {q0, q1, T, t0}
-        self._last_q_ref: np.ndarray | None = None
-        self._q_goal: np.ndarray | None = None
+        # self._pd_thread: threading.Thread | None = None
+        # self._pd_stop_evt = threading.Event()
+        # self._pd_new_goal_evt = threading.Event()
+        # self._pd_lock = threading.Lock()
+        # self._pd_dt = 0.01  # 100 Hz by default
+        # self._nominal_vel = 1.0  # rad/s cap for planning
+        # self._min_traj_T = 0.25
+        # self._max_traj_T = 1.0
+        # self._active_traj: dict | None = None  # {q0, q1, T, t0}
+        # self._last_q_ref: np.ndarray | None = None
+        # self._q_goal: np.ndarray | None = None
     
     @property
     def is_connected(self) -> bool:
@@ -156,6 +193,15 @@ class ErgoCubBimanualController:
             logger.warning(f"Failed to connect {torso_encoders_remote} -> {torso_encoders_local}, retrying...")
             time.sleep(1)
 
+        self.rec = rr.RecordingStream(application_id="metacub_dashboard", recording_id=rr.rid)
+        rr.spawn(recording=self.rec, memory_limit="50%")
+        self.rec.connect_grpc()
+        # self.rec.set_time("real_time", duration=0.0)
+        urdf = urdf_parser.URDF.from_xml_file(cfg.urdf)
+        urdf.path = cfg.urdf
+        self.urdf_logger = URDFLogger(urdf, self.rec)
+        self.urdf_logger.init()
+
         # Open controlboard remapper PolyDriver for position control of all joints
         props = yarp.Property()
         props.put("robot", "ergocubSim")
@@ -183,21 +229,16 @@ class ErgoCubBimanualController:
             self._icmd.setControlMode(j, yarp.VOCAB_CM_POSITION_DIRECT)
 
         # Replace short-burst executor with persistent streaming thread
-        self._pd_executor = None
-        self._last_future = None
+        # self._pd_executor = None
+        # self._last_future = None
 
         # Initialize last reference to current encoders and start PD loop
-        self._last_q_ref = self._read_current_joints()
-        self._pd_stop_evt.clear()
-        self._pd_thread = threading.Thread(target=self._pd_loop, name="pd-stream", daemon=True)
-        self._pd_thread.start()
+        # self._last_q_ref = self._read_current_joints()
+        # self._pd_stop_evt.clear()
+        # self._pd_thread = threading.Thread(target=self._pd_loop, name="pd-stream", daemon=True)
+        # self._pd_thread.start()
 
         self._is_connected = True
-        self.initial_position = np.array([-5.15586422e-01,  5.15563259e-01,  8.66521676e-04,  7.84699903e-01,
-                                           2.41915094e-06,  2.11463754e-05, -1.72567871e-03, -5.15615291e-01,
-                                           5.15524823e-01,  8.81244420e-04,  7.84702351e-01,  6.89402045e-07,
-                                           2.80294707e-05, -1.71659003e-03, -4.78971553e-03,  1.54077055e-02,
-                                           7.14345317e-04])
         logger.info("ErgoCubBimanualController connected")
 
     
@@ -343,15 +384,57 @@ class ErgoCubBimanualController:
                     if hand_name == "left":
                         left_pose.pos = pose[:3]
                         left_pose.quat = pose[3:]
+                        self.tasks['left'].set_target(pin.SE3(R.from_quat(left_pose.quat, scalar_first=True).as_matrix(), left_pose.pos))
                     else:
                         right_pose.pos = pose[:3]
                         right_pose.quat = pose[3:]
+                        self.tasks['right'].set_target(pin.SE3(R.from_quat(right_pose.quat, scalar_first=True).as_matrix(), right_pose.pos))
 
         # Compute inverse kinematics and send commands
         # Provide current joints (radians) to IK, as required
         q_curr = self._read_current_joints()
-        q = self.ik.solve_ik(right_pose=right_pose, left_pose=left_pose, q=q_curr)
-        self.send_command(q)
+        s = time.perf_counter()
+        # q = self.ik.solve_ik(right_pose=right_pose, left_pose=left_pose, q=q_curr, vel_threshold=np.pi / 180)
+                # 1. Get current robot configuration
+
+        current_joints_dict = {name: value for name, value in zip(self.joint_names, q_curr)}
+        conf_vector = custom_configuration_vector(self.robot, **current_joints_dict)
+        configuration = pink.Configuration(self.robot.model, self.robot.data, conf_vector)
+        
+
+        dt = 6e-3
+        linear_tolerance = 1e-3  # 1 millimeter
+        angular_tolerance = 1.7e-2 # 1 degree in radians (1 * np.pi / 180)
+        for _ in np.arange(20):
+            velocity = solve_ik(configuration, [self.tasks['left'], self.tasks['right']], dt, solver="proxqp", safety_break=False)
+            conf_vector = configuration.integrate(velocity, dt)
+            configuration = pink.Configuration(self.robot.model, self.robot.data, conf_vector)
+
+            l_pos_error = np.linalg.norm(self.tasks['left'].compute_error(configuration)[:3])
+            l_rot_error = np.linalg.norm(self.tasks['left'].compute_error(configuration)[3:])
+            r_pos_error = np.linalg.norm(self.tasks['right'].compute_error(configuration)[:3])
+            r_rot_error = np.linalg.norm(self.tasks['right'].compute_error(configuration)[3:])
+
+            if (l_pos_error < linear_tolerance and 
+                l_rot_error < angular_tolerance and
+                r_pos_error < linear_tolerance and
+                r_rot_error < angular_tolerance):
+                break
+            # time.sleep(dt)
+
+        q = np.array([configuration.q[get_joint_idx(self.robot.model, name)[0]] for name in self.joint_names])
+
+        print(time.perf_counter() - s)
+        # self.send_command(q)
+        pos = yarp.Vector(len(self.joint_names))
+        # Send command (degrees)
+        for idx, angle in enumerate(q):
+            pos.set(idx, angle / np.pi * 180.0)
+        
+        for idx, angle in enumerate(q_curr):
+            self.urdf_logger.log(self.joint_names[idx], angle)
+
+        self._iposd.setPositions(pos.data())
         
         # Handle finger commands (bimanual controller doesn't actually control fingers, 
         # but we need to accept the commands to avoid errors during recording)
@@ -363,7 +446,14 @@ class ErgoCubBimanualController:
 
     def reset(self) -> None:
         """Reset the bimanual controller"""
-        self.send_command(self.initial_position)
+        # self.send_command(self.initial_position)
+        pos = yarp.Vector(len(self.joint_names))
+        # Send command (degrees)
+        for idx, angle in enumerate(self.initial_position):
+            pos.set(idx, angle / np.pi * 180.0)
+            self.urdf_logger.log(self.joint_names[idx], angle)
+
+        self._iposd.setPositions(pos.data())
 
     @property
     def motor_features(self) -> dict[str, type]:
@@ -480,6 +570,8 @@ class ErgoCubBimanualController:
             for j in range(n_axes):
                 pos.set(j, float(np.degrees(q_ref[j])))
             self._iposd.setPositions(pos.data())
+            for name, angle in zip(self.joint_names, q_ref):
+                self.urdf_logger.log(name, angle)
 
             # Hybrid sleep + short spin to target next tick
             next_t += dt
@@ -509,31 +601,3 @@ class ErgoCubBimanualController:
             self._iposd.setPositions(pos.data())
         except Exception:
             pass
-
-    # Legacy short-burst helper retained for reference but no longer used by send_command
-    def _stream_positions(self, q_target, T, dt) -> None:
-        """Run a short non-blocking stream of minimum-jerk interpolated joint positions at fixed rate.
-        Kept for backward compatibility; prefer the persistent PD loop.
-        """
-        if not self.is_connected or self._iposd is None:
-            return
-        q0 = self._read_current_joints()
-        q_goal = np.asarray(q_target, dtype=float)
-        n_axes = len(self.joint_names)
-        waypoints = self._generate_joint_space_min_jerk(q0, q_goal, T, dt)
-        pos = yarp.Vector(n_axes)
-        t0 = time.perf_counter()
-        for i, wp in enumerate(waypoints, start=1):
-            qk = wp["position"]
-            for j in range(n_axes):
-                pos.set(j, float(np.degrees(qk[j])))
-            self._iposd.setPositions(pos.data())
-            target_t = t0 + i * dt
-            # Hybrid timing even here
-            now = time.perf_counter()
-            sleep_dur = target_t - now - 0.001
-            if sleep_dur > 0:
-                time.sleep(sleep_dur)
-            while time.perf_counter() < target_t:
-                pass
-        # No print() to avoid I/O jitter

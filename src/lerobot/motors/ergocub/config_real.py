@@ -51,11 +51,11 @@ class Config(BaseConfig):
     joint_pos_kd = np.array([*[4.5]*no_right, *[4.5]*no_left, *[22.5]*no_torso], dtype=float)
 
     cart_pos_weight = np.array([20.0, 20.0], dtype=float)
-    cart_pos_kp     = np.array([100.0, 100.0], dtype=float)
+    cart_pos_kp     = np.array([250.0, 250.0], dtype=float)
     cart_pos_kd     = np.array([25.0, 25.0], dtype=float)
 
     cart_ori_weight = np.array([0.01, 0.01], dtype=float)
-    cart_ori_kp     = np.array([100.0, 100.0], dtype=float)
+    cart_ori_kp     = np.array([250.0, 250.0], dtype=float)
     cart_ori_kd     = np.array([25.0, 25.0], dtype=float)
 
     improve_manip_weight: float = 0.001
