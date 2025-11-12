@@ -24,6 +24,8 @@ from scipy.spatial.transform import Rotation as R
 from .urdf_utils import resolve_ergocub_urdf
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.model.kinematics import RobotKinematics
+from pytorch3d.transforms import matrix_to_rotation_6d, rotation_6d_to_matrix
+import torch
 
 logger = logging.getLogger(__name__)
 
@@ -180,18 +182,19 @@ class ErgoCubBimanualController:
             if side in self.kinematics_solvers:
                 pose_matrix = self.kinematics_solvers[side].forward_kinematics(joint_positions)
                 position = pose_matrix[:3, 3]
-                rotation = R.from_matrix(pose_matrix[:3, :3])
-                quaternion = rotation.as_quat(canonical=True, scalar_first=True)  # [x, y, z, w]
+                rotation_6d = matrix_to_rotation_6d(torch.tensor(pose_matrix[:3, :3], dtype=torch.float32)).numpy().flatten()
                 
                 # Add to state
                 state.update({
                     f"{side}_hand.position.x": position[0].item(),
                     f"{side}_hand.position.y": position[1].item(),
                     f"{side}_hand.position.z": position[2].item(),
-                    f"{side}_hand.orientation.qw": quaternion[0].item(),
-                    f"{side}_hand.orientation.qx": quaternion[1].item(),
-                    f"{side}_hand.orientation.qy": quaternion[2].item(),
-                    f"{side}_hand.orientation.qz": quaternion[3].item(),
+                    f"{side}_hand.orientation.d1": rotation_6d[0].item(),
+                    f"{side}_hand.orientation.d2": rotation_6d[1].item(),
+                    f"{side}_hand.orientation.d3": rotation_6d[2].item(),
+                    f"{side}_hand.orientation.d4": rotation_6d[3].item(),
+                    f"{side}_hand.orientation.d5": rotation_6d[4].item(),
+                    f"{side}_hand.orientation.d6": rotation_6d[5].item(),
                 })
                 
                 # Add actual finger values from encoders
@@ -213,12 +216,16 @@ class ErgoCubBimanualController:
         """
         if not self.is_connected:
             raise DeviceNotConnectedError("ErgoCubBimanualController not connected")
-        
-        # One-liner: move scalar (qw) from index 3 to the end -> [x,y,z,qw,qx,qy,qz]
+
+        # Convert 6d rotation to quaternion for both hands
         if left_pose is not None:
-            left_pose[3:7] = np.r_[left_pose[4:7], left_pose[3]]
+            rot_matrix_left = torch.tensor(rotation_6d_to_matrix(torch.tensor(left_pose[3:9], dtype=torch.float32)), dtype=torch.float32)
+            quat_left = R.from_matrix(rot_matrix_left.numpy()).as_quat(canonical=True, scalar_first=False)  # [x, y, z, w]
+            left_pose = np.concatenate([left_pose[0:3], quat_left])
         if right_pose is not None:
-            right_pose[3:7] = np.r_[right_pose[4:7], right_pose[3]]
+            rot_matrix_right = torch.tensor(rotation_6d_to_matrix(torch.tensor(right_pose[3:9], dtype=torch.float32)), dtype=torch.float32)
+            quat_right = R.from_matrix(rot_matrix_right.numpy()).as_quat(canonical=True, scalar_first=False)  # [x, y, z, w]
+            right_pose = np.concatenate([right_pose[0:3], quat_right])
 
         # Send left hand command
         if left_pose is not None and self.use_left_hand:
@@ -257,10 +264,10 @@ class ErgoCubBimanualController:
                 # Extract pose components - position.x, position.y, position.z, orientation qw,qx,qy,qz
                 pos_keys = ["position.x", "position.y", "position.z"]
                 # Build scalar-first so we can rotate slice with one-liner above
-                quat_keys = ["orientation.qw", "orientation.qx", "orientation.qy", "orientation.qz"]
+                keys_6d = ["orientation.d1", "orientation.d2", "orientation.d3", "orientation.d4", "orientation.d5", "orientation.d6"]
                 
-                if all(key in hand_cmds for key in pos_keys + quat_keys):
-                    pose = np.array([hand_cmds[key] for key in pos_keys + quat_keys])
+                if all(key in hand_cmds for key in pos_keys + keys_6d):
+                    pose = np.array([hand_cmds[key] for key in pos_keys + keys_6d])
                     if hand_name == "left":
                         self.send_command(left_pose=pose)
                     else:
@@ -291,14 +298,14 @@ class ErgoCubBimanualController:
         if self.use_left_hand:
             for coord in ["x", "y", "z"]:
                 features[f"left_hand.position.{coord}"] = float
-            for coord in ["qw", "qx", "qy", "qz"]:
+            for coord in ["d1", "d2", "d3", "d4", "d5", "d6"]:
                 features[f"left_hand.orientation.{coord}"] = float
         
         # Right hand
         if self.use_right_hand:
             for coord in ["x", "y", "z"]:
                 features[f"right_hand.position.{coord}"] = float
-            for coord in ["qw", "qx", "qy", "qz"]:
+            for coord in ["d1", "d2", "d3", "d4", "d5", "d6"]:
                 features[f"right_hand.orientation.{coord}"] = float
         
         return features
