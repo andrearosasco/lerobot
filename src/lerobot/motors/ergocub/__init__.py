@@ -14,6 +14,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .arm_controller import ErgoCubArmController
 from .head_controller import ErgoCubHeadController
 from .ergocub_motors_bus import ErgoCubMotorsBus
