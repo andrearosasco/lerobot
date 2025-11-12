@@ -140,4 +140,5 @@ class ErgoCubMotorsBus:
         self._reset_port.write()
         self.controllers['bimanual'].reset()
         self.controllers['head'].reset()
+        self.controllers['fingers'].reset()
         time.sleep(5)  # Allow some time for reset to take effect

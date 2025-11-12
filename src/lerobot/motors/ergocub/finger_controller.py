@@ -94,6 +94,17 @@ class ErgoCubFingerController:
         
         return {}
     
+    def reset(self) -> None:
+        """Reset finger controller (no-op)."""
+        if not self.is_connected:
+            raise DeviceNotConnectedError("ErgoCubFingerController not connected")
+        finger_bottle = yarp.Bottle()
+        finger_bottle.clear()
+        for _ in range(12):
+            finger_bottle.addFloat64(0.0)
+        self.finger_cmd_port.write(finger_bottle)
+        logger.info("ErgoCubFingerController reset")
+    
     def send_commands(self, commands: dict[str, float]) -> None:
         """Send finger commands to controller."""
         if not self.is_connected:
