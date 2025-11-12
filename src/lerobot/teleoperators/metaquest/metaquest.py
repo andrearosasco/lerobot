@@ -26,6 +26,8 @@ from lerobot.teleoperators.teleoperator import Teleoperator
 from .configuration_metaquest import MetaQuestConfig
 from scipy.spatial.transform import Rotation as R
 from lerobot.robots.ergocub.manipulator import Manipulator
+from pytorch3d.transforms import matrix_to_rotation_6d
+import torch
 
 HEAD_TO_ROOT = np.array([
     [1.0, 0.0, 0.0, 0.005],
@@ -209,8 +211,8 @@ class MetaQuest(Teleoperator):
         transform = (QUEST_TO_ECUB @ transform @ HAND_ADAPTER)
 
         position = transform[:3, 3]
-        quat = R.from_matrix(transform[:3, :3]).as_quat(canonical=True, scalar_first=True)  # [w, x, y, z]
-        return np.r_[position, quat]
+        rot_6d = matrix_to_rotation_6d(torch.tensor(transform[:3, :3], dtype=torch.float32)).numpy().flatten()
+        return np.r_[position, rot_6d]
 
     def _get_finger_poses(self, side: str) -> dict:
         """Get raw finger poses from MetaQuest relative to hand frame."""
@@ -277,19 +279,23 @@ class MetaQuest(Teleoperator):
             "left_hand.position.x": float,
             "left_hand.position.y": float,
             "left_hand.position.z": float,
-            "left_hand.orientation.qw": float,
-            "left_hand.orientation.qx": float,
-            "left_hand.orientation.qy": float,
-            "left_hand.orientation.qz": float,
+            "left_hand.orientation.d1": float,
+            "left_hand.orientation.d2": float,
+            "left_hand.orientation.d3": float,
+            "left_hand.orientation.d4": float,
+            "left_hand.orientation.d5": float,
+            "left_hand.orientation.d6": float,
             
             # Right hand pose
             "right_hand.position.x": float,
             "right_hand.position.y": float,
             "right_hand.position.z": float,
-            "right_hand.orientation.qw": float,
-            "right_hand.orientation.qx": float,
-            "right_hand.orientation.qy": float,
-            "right_hand.orientation.qz": float,
+            "right_hand.orientation.d1": float,
+            "right_hand.orientation.d2": float,
+            "right_hand.orientation.d3": float,
+            "right_hand.orientation.d4": float,
+            "right_hand.orientation.d5": float,
+            "right_hand.orientation.d6": float,
             
             # Left finger joints
             "left_fingers.thumb_add": float,
