@@ -48,10 +48,11 @@
       "preLaunchTask": "clear-test",
       "args": [
         "--policy.type=act",
-        "--policy.repo_id=HSP-IIT/train_ergoPour_resolved",
-        "--dataset.repo_id=HSP-IIT/ergoPour_resolved",
+        "--policy.repo_id=HSP-IIT/trained_hri2_splitted",
+        "--dataset.repo_id=HSP-IIT/hri2_splitted",
         "--policy.device=cuda",
-        "--output_dir=checkpoints/ergoPour_resolved"
+        "--output_dir=checkpoints/hri2_splitted",
+        "--policy.use_language_conditioning=true"
       ]
     },
     {
@@ -71,7 +72,7 @@
         "--robot.cameras={egocentric:{\"type\": \"yarp\", \"yarp_name\": \"ergocubSim/depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
         "--robot.control_boards=[head,left_hand,right_hand,fingers,torso]",
         "--teleop.type=metaquest",
-        "--dataset.repo_id=steb6/test",
+        "--dataset.repo_id=steb6/test2",
         "--dataset.num_episodes=1",
         "--dataset.fps=10",
         "--dataset.reset_time=1",

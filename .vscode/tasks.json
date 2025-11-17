@@ -19,7 +19,7 @@
     {
       "label": "clear-record",
       "type": "shell",
-      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/steb6/test",
+      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/steb6/test2",
       "options": {
         "cwd": "${workspaceFolder}"
       },
