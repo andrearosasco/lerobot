@@ -84,7 +84,7 @@ class MetaQuest(Teleoperator):
             ("index_tip", 10), 
             ("middle_tip", 15),
             ("ring_tip", 20),
-            ("pinky_tip", 25)
+            ("little_tip", 25)
         ]
 
         # Joint names for each hand (same order for left and right)
@@ -205,7 +205,7 @@ class MetaQuest(Teleoperator):
 
     def _get_hand_pose(self, side: str) -> dict:
         """Get raw hand pose from MetaQuest."""
-        frame_name = f"openxr_{side}_hand"
+        frame_name = f"openxr_{side}_hand_joint_wrist"
         transform = self._get_transform(frame_name)
         HAND_ADAPTER = LEFT_HAND_ADAPTER if side == "left" else RIGHT_HAND_ADAPTER
         transform = (QUEST_TO_ECUB @ transform @ HAND_ADAPTER)
@@ -216,11 +216,11 @@ class MetaQuest(Teleoperator):
 
     def _get_finger_poses(self, side: str) -> dict:
         """Get raw finger poses from MetaQuest relative to hand frame."""
-        hand_frame = f"openxr_{side}_hand_finger_0"  # Reference frame (hand)
+        hand_frame = f"openxr_{side}_hand_joint_palm"  # Reference frame (hand)
         positions = []
         
-        for _, finger_index in self.finger_index_pairs:
-            finger_frame = f"openxr_{side}_hand_finger_{finger_index}"
+        for finger_name, _ in self.finger_index_pairs:
+            finger_frame = f"openxr_{side}_hand_joint_{finger_name}"
             transform = self._get_transform(finger_frame, hand_frame)
             
             # Extract position from transformation matrix
