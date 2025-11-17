@@ -1,6 +1,16 @@
 {
   "version": "0.2.0",
   "configurations": [
+
+    {
+      "name": "Split dataset",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "/home/sberti/metaCub/split_lerobot_dataset_by_action.py",
+      "console": "integratedTerminal",
+      "python": "/home/sberti/.local/share/mamba/envs/lerobot/bin/python",
+      "cwd": "/home/sberti/metaCub"
+    },
     {
       "name": "Test",
       "type": "debugpy",
@@ -25,8 +35,7 @@
         "--dataset.episode_time=10",
         "--dataset.fps=10"
       ]
-    }
-    ,
+    },
     {
       "name": "Train",
       "type": "debugpy",
@@ -38,14 +47,13 @@
       },
       "preLaunchTask": "clear-test",
       "args": [
-        "--policy.type=diffusion",
-        "--policy.repo_id=steb6/train-redball",
-        "--dataset.repo_id=steb6/redball",
+        "--policy.type=act",
+        "--policy.repo_id=HSP-IIT/train_ergoPour_resolved",
+        "--dataset.repo_id=HSP-IIT/ergoPour_resolved",
         "--policy.device=cuda",
-        "--output_dir=checkpoints/redball"
+        "--output_dir=checkpoints/ergoPour_resolved"
       ]
-    }
-    ,
+    },
     {
       "name": "Record",
       "type": "debugpy",
@@ -60,15 +68,31 @@
         "--robot.type=ergocub",
         "--robot.remote_prefix=/ergocubSim",
         "--robot.local_prefix=/lerobot",
-        "--robot.cameras={ external: {\"type\": \"yarp\", \"yarp_name\": \"camera\", \"width\": 640, \"height\": 480, \"fps\": 30}, egocentric:{\"type\": \"yarp\", \"yarp_name\": \"ergocubSim/depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
+        "--robot.cameras={egocentric:{\"type\": \"yarp\", \"yarp_name\": \"ergocubSim/depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
         "--robot.control_boards=[head,left_hand,right_hand,fingers,torso]",
         "--teleop.type=metaquest",
-        "--dataset.repo_id=steb6/redball",
-        "--dataset.num_episodes=100",
+        "--dataset.repo_id=steb6/test",
+        "--dataset.num_episodes=1",
         "--dataset.fps=10",
         "--dataset.reset_time=1",
-        "--dataset.episode_time=60",
+        "--dataset.episode_time=30",
         "--dataset.single_task=get the ball"
+      ]
+    },
+    {
+      "name": "Visualize dataset",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_dataset_viz.py",
+      "console": "integratedTerminal",
+      "python": "/home/sberti/.local/share/mamba/envs/lerobot/bin/python",
+      "cwd": "/home/sberti/metaCub",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      },
+      "args": [
+        "--root=HSP-IIT/hri2_splitted",
+        "--repo-id=HSP-IIT/hri2_splitted"
       ]
     },
     {

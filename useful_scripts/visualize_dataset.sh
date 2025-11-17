@@ -1,0 +1,1 @@
+for i in {0..9}; do lerobot-dataset-viz --repo-id HSP-IIT/hri2 --episode-index $i; done
