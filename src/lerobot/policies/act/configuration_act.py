@@ -132,6 +132,16 @@ class ACTConfig(PreTrainedConfig):
     dropout: float = 0.1
     kl_weight: float = 10.0
 
+    # Language conditioning.
+    use_language_conditioning: bool = False
+    language_encoder_type: str = "clip"  # Options: "clip", "bert", "t5"
+    language_model_name: str = "openai/clip-vit-base-patch32"
+    freeze_language_encoder: bool = True
+    language_projection_dim: int | None = None  # If None, uses dim_model
+    language_dropout: float = 0.1
+    max_token_length: int = 77  # CLIP default
+    language_pooling: str = "cls"  # Options: "cls", "mean", "max"
+
     # Training preset
     optimizer_lr: float = 1e-5
     optimizer_weight_decay: float = 1e-4
@@ -144,6 +154,10 @@ class ACTConfig(PreTrainedConfig):
         if not self.vision_backbone.startswith("resnet"):
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
+            )
+        if self.use_language_conditioning and self.language_encoder_type not in ["clip", "bert", "t5"]:
+            raise ValueError(
+                f"language_encoder_type must be 'clip', 'bert', or 't5'. Got {self.language_encoder_type}."
             )
         if self.temporal_ensemble_coeff is not None and self.n_action_steps > 1:
             raise NotImplementedError(
