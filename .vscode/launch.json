@@ -49,7 +49,7 @@
       "args": [
         "--policy.type=act",
         "--policy.repo_id=HSP-IIT/trained_hri2_splitted",
-        "--dataset.repo_id=HSP-IIT/hri2_splitted",
+        "--dataset.repo_id=HSP-IIT/redball_sim",
         "--policy.device=cuda",
         "--output_dir=checkpoints/hri2_splitted",
         "--policy.use_language_conditioning=true"
@@ -92,9 +92,9 @@
         "PYTHONPATH": "${workspaceFolder}/src"
       },
       "args": [
-        "--root=HSP-IIT/hri2_splitted",
-        "--repo-id=HSP-IIT/hri2_splitted"
-      ]
+        "--repo-id=steb6/hri_real_3"
+      ],
+      "justMyCode": false
     },
     {
       "name": "Record Real",
@@ -105,20 +105,21 @@
       "env": {
         "PYTHONPATH": "${workspaceFolder}/src"
       },
-      "preLaunchTask": "clear-record",
+      // "preLaunchTask": "clear-record",
       "args": [
         "--robot.type=ergocub",
         "--robot.remote_prefix=/ergocub",
         "--robot.local_prefix=/lerobot",
-        "--robot.cameras={ external: {\"type\": \"yarp\", \"yarp_name\": \"depthCamera/rgbImage:o\", \"width\": 1280, \"height\": 720, \"fps\": 30}}",
+        "--robot.cameras={ external: {\"type\": \"yarp\", \"yarp_name\": \"depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
         "--robot.control_boards=[head,left_hand,right_hand,fingers,torso]",
         "--teleop.type=metaquest",
-        "--dataset.repo_id=steb6/redball_real",
-        "--dataset.num_episodes=50",
+        "--dataset.repo_id=steb6/hri_real_3",
+        "--dataset.num_episodes=1",
         "--dataset.fps=10",
         "--dataset.reset_time=3",
-        "--dataset.episode_time=10",
-        "--dataset.single_task=get the ball"
+        "--dataset.episode_time=300",
+        "--dataset.single_task=interact with the human",
+        "--resume=true"
       ]
     }
   ]

@@ -24,6 +24,8 @@ from scipy.spatial.transform import Rotation as R
 from .urdf_utils import resolve_ergocub_urdf
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.model.kinematics import RobotKinematics
+from pytorch3d.transforms import matrix_to_rotation_6d, rotation_6d_to_matrix
+import torch
 
 if TYPE_CHECKING:
     from lerobot.model.kinematics import RobotKinematics
@@ -157,27 +159,28 @@ class ErgoCubHeadController:
         # Combine torso + neck joints for kinematics (6 joints total: 3 torso + 3 neck)
         full_joint_values = np.concatenate([torso_values, neck_values[:3]])
         T = self.kinematics_solver.forward_kinematics(full_joint_values.tolist())
-        quaternion = R.from_matrix(T[:3, :3]).as_quat(canonical=True, scalar_first=True)  # [w, x, y, z]
+        pose_6d = matrix_to_rotation_6d(torch.tensor(R.from_matrix(T[:3, :3]).as_matrix())).numpy()
 
-        return_dict = {"head.orientation.qw": quaternion[0].item(),
-                       "head.orientation.qx": quaternion[1].item(),
-                       "head.orientation.qy": quaternion[2].item(),
-                       "head.orientation.qz": quaternion[3].item()}
+        return_dict = {"head.orientation.d1": pose_6d[0].item(),
+                       "head.orientation.d2": pose_6d[1].item(),
+                       "head.orientation.d3": pose_6d[2].item(),
+                       "head.orientation.d4": pose_6d[3].item(),
+                       "head.orientation.d5": pose_6d[4].item(),
+                       "head.orientation.d6": pose_6d[5].item(),}
 
         return return_dict
     
-    def send_command(self, orientation: np.ndarray) -> None:
+    def send_command(self, pose_6d: np.ndarray) -> None:
         """
         Send orientation command to the head.
         
         Args:
-            orientation: Array [qw, qx, qy, qz] for neck orientation
+            pose_6d: Array [d1, d2, d3, d4, d5, d6] for neck orientation
         """
         if not self.is_connected:
             raise DeviceNotConnectedError("ErgoCubNeckController not connected")
         
-        # Convert quaternion to rotation matrix (MetaControllServer expects 3x3 matrix)
-        rot_matrix = R.from_quat(orientation, scalar_first=True).as_matrix().reshape(-1)
+        rot_matrix = rotation_6d_to_matrix(torch.tensor(pose_6d)).numpy().flatten()
         
         # Send RPC command to head controller
         neck_cmd = yarp.Bottle()
@@ -193,10 +196,10 @@ class ErgoCubHeadController:
     def send_commands(self, commands: dict[str, float]) -> None:
         """Send commands from dict format."""
         # Extract neck orientation if available
-        quat_keys = ["head.orientation.qw", "head.orientation.qx", "head.orientation.qy", "head.orientation.qz"]
-        if all(key in commands for key in quat_keys):
-            orientation = np.array([commands[key] for key in quat_keys])
-            self.send_command(orientation)
+        pose_6d_keys = ["head.orientation.d1", "head.orientation.d2", "head.orientation.d3", "head.orientation.d4", "head.orientation.d5", "head.orientation.d6"]
+        if all(key in commands for key in pose_6d_keys):
+            pose_6d = np.array([commands[key] for key in pose_6d_keys])
+            self.send_command(pose_6d)
 
     def reset(self) -> None:
         """Reset the bimanual controller"""
@@ -212,7 +215,7 @@ class ErgoCubHeadController:
         features = {}
         
         # Neck orientation (4 DOF)
-        for coord in ["qw", "qx", "qy", "qz"]:
+        for coord in ["d1", "d2", "d3", "d4", "d5", "d6"]:
             features[f"head.orientation.{coord}"] = float
         
         return features

@@ -199,8 +199,9 @@ class MetaQuest(Teleoperator):
         transform = (QUEST_TO_ECUB @ transform @ HEAD_ADAPTER)
 
         position = transform[:3, 3]
-        quat = R.from_matrix(transform[:3, :3]).as_quat(canonical=True, scalar_first=True)  # [w, x, y, z]
-        return np.r_[position, quat]
+        # quat = R.from_matrix(transform[:3, :3]).as_quat(canonical=True, scalar_first=True)  # [w, x, y, z]
+        pose_6d = matrix_to_rotation_6d(torch.tensor(R.from_matrix(transform[:3, :3]).as_matrix())).numpy()
+        return np.r_[position, pose_6d]
 
 
     def _get_hand_pose(self, side: str) -> dict:
@@ -270,10 +271,12 @@ class MetaQuest(Teleoperator):
             "head.position.x": float,
             "head.position.y": float, 
             "head.position.z": float,
-            "head.orientation.qw": float,
-            "head.orientation.qx": float,
-            "head.orientation.qy": float,
-            "head.orientation.qz": float,
+            "head.orientation.d1": float,
+            "head.orientation.d2": float,
+            "head.orientation.d3": float,
+            "head.orientation.d4": float,
+            "head.orientation.d5": float,
+            "head.orientation.d6": float,
             
             # Left hand pose
             "left_hand.position.x": float,
