@@ -106,13 +106,13 @@ class MetaQuestRelativeMotionProcessor(ProcessorStep):
             rel_pos = vr_pos - self.vr_origin_pos
             target_pos = self.eef_origin_pos + rel_pos
             
-            # Calculate relative rotation in local frame (VR)
-            # R_delta_local = R_origin^T * R_current
-            rel_rot_local = self.vr_origin_rot.inv() * vr_rot
+            # Calculate relative rotation in global frame (VR)
+            # R_delta_global = R_current * R_origin^T
+            rel_rot_global = vr_rot * self.vr_origin_rot.inv()
             
             # Apply to robot origin in local frame (EEF)
-            # R_target = R_eef_origin * R_delta_local
-            target_rot = self.eef_origin_rot * rel_rot_local
+            # R_target = R_eef_origin * R_delta_global
+            target_rot = self.eef_origin_rot * rel_rot_global
             
             # Convert back to axis angle for action
             target_rot_vec = target_rot.as_rotvec()
