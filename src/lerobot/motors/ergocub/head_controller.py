@@ -19,7 +19,10 @@ import time
 from typing import Dict, Optional, TYPE_CHECKING
 
 import numpy as np
-import yarp
+try:
+    import yarp
+except ImportError as e:
+    pass
 from scipy.spatial.transform import Rotation as R
 from .urdf_utils import resolve_ergocub_urdf
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
