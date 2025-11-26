@@ -311,6 +311,7 @@ def encode_video_frames(
     fast_decode: int = 0,
     log_level: int | None = av.logging.ERROR,
     overwrite: bool = False,
+    preset: int | None = None,
 ) -> None:
     """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
     # Check encoder availability
@@ -359,10 +360,12 @@ def encode_video_frames(
         value = f"fast-decode={fast_decode}" if vcodec == "libsvtav1" else "fastdecode"
         video_options[key] = value
 
+    if vcodec == "libsvtav1":
+        video_options["preset"] = str(preset) if preset is not None else "12"
+
     # Set logging level
     if log_level is not None:
-        # "While less efficient, it is generally preferable to modify logging with Python's logging"
-        logging.getLogger("libav").setLevel(log_level)
+        av.logging.set_level(log_level)
 
     # Create and open output file (overwrite by default)
     with av.open(str(video_path), "w") as output:
@@ -387,7 +390,7 @@ def encode_video_frames(
 
     # Reset logging level
     if log_level is not None:
-        av.logging.restore_default_callback()
+        av.logging.set_level(av.logging.ERROR)
 
     if not video_path.exists():
         raise OSError(f"Video encoding did not work. File not found: {video_path}.")

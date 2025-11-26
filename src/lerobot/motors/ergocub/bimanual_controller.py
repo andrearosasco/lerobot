@@ -209,9 +209,9 @@ class ErgoCubBimanualController:
         Send commands to bimanual controller.
         
         Args:
-            left_pose: Left hand pose [x, y, z, qw, qx, qy, qz] (optional)
+            left_pose: Left hand pose [x, y, z, d1, d2, d3, d4, d5, d6] (optional)
             left_fingers: Left finger commands (optional)
-            right_pose: Right hand pose [x, y, z, qw, qx, qy, qz] (optional)
+            right_pose: Right hand pose [x, y, z, d1, d2, d3, d4, d5, d6] (optional)
             right_fingers: Right finger commands (optional)
         """
         if not self.is_connected:
@@ -220,17 +220,17 @@ class ErgoCubBimanualController:
         # Convert 6d rotation to quaternion for both hands
         if left_pose is not None:
             rot_matrix_left = torch.tensor(rotation_6d_to_matrix(torch.tensor(left_pose[3:9], dtype=torch.float32)), dtype=torch.float32)
-            quat_left = R.from_matrix(rot_matrix_left.numpy()).as_quat(canonical=True, scalar_first=False)  # [x, y, z, w]
-            left_pose = np.concatenate([left_pose[0:3], quat_left])
+            rot_left = R.from_matrix(rot_matrix_left.numpy()).as_matrix().flatten()
+            left_pose = np.concatenate([left_pose[0:3], rot_left])
         if right_pose is not None:
             rot_matrix_right = torch.tensor(rotation_6d_to_matrix(torch.tensor(right_pose[3:9], dtype=torch.float32)), dtype=torch.float32)
-            quat_right = R.from_matrix(rot_matrix_right.numpy()).as_quat(canonical=True, scalar_first=False)  # [x, y, z, w]
-            right_pose = np.concatenate([right_pose[0:3], quat_right])
+            rot_right = R.from_matrix(rot_matrix_right.numpy()).as_matrix().flatten()
+            right_pose = np.concatenate([right_pose[0:3], rot_right])
 
         # Send left hand command
         if left_pose is not None and self.use_left_hand:
             left_cmd = yarp.Bottle()
-            left_cmd.addString("go_to_pose")
+            left_cmd.addString("flat_go_to_pose")
             for val in left_pose:
                 left_cmd.addFloat64(float(val))
             left_cmd.addString("left")  # hand side specification
@@ -241,7 +241,7 @@ class ErgoCubBimanualController:
         # Send right hand command
         if right_pose is not None and self.use_right_hand:
             right_cmd = yarp.Bottle()
-            right_cmd.addString("go_to_pose")
+            right_cmd.addString("flat_go_to_pose")
             for val in right_pose:
                 right_cmd.addFloat64(float(val))
             right_cmd.addString("right")  # hand side specification
