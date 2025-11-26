@@ -26,7 +26,7 @@ from lerobot.teleoperators.teleoperator import Teleoperator
 from .configuration_metaquest import MetaQuestConfig
 from scipy.spatial.transform import Rotation as R
 from lerobot.robots.ergocub.manipulator import Manipulator
-from pytorch3d.transforms import matrix_to_rotation_6d
+from lerobot.utils.rotation import matrix_to_rotation_6d
 import torch
 
 HEAD_TO_ROOT = np.array([

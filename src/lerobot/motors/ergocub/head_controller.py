@@ -24,6 +24,8 @@ from scipy.spatial.transform import Rotation as R
 from .urdf_utils import resolve_ergocub_urdf
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.model.kinematics import RobotKinematics
+from lerobot.utils.rotation import matrix_to_rotation_6d, rotation_6d_to_matrix
+import torch
 
 if TYPE_CHECKING:
     from lerobot.model.kinematics import RobotKinematics
