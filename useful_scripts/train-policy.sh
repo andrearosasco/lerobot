@@ -1,12 +1,14 @@
 python \
 	src/lerobot/scripts/lerobot_train.py \
 	--wandb.enable=true \
-	--policy.type=act \
-	--policy.repo_id=steb6/act_hri_ste_carmela_split \
-	--policy.use_language_conditioning=true \
-	--policy.chunk_size=10 \
-	--policy.n_action_steps=5 \
-	--policy.language_dropout=0.0 \
+	--batch_size=8 \
+	--num_workers=4 \
+	--policy.type=diffusion \
+	--policy.repo_id=steb6/dp_hri_ste_carmela_split_no_labels \
+	--policy.crop_shape=null \
+	--policy.resize_shape=[240,320] \
+	--policy.noise_scheduler_type=DDIM \
+	--policy.num_train_timesteps=100 \
 	--dataset.repo_id=steb6/hri_ste_carmela_split \
 	--policy.device=cuda \
-	--output_dir=checkpoints/ergoPohri_ste_carmela_splitur_resolved
+	--output_dir=checkpoints/dp_hri_ste_carmela_split_no_labels
