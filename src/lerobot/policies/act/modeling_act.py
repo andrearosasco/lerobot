@@ -35,6 +35,10 @@ from torchvision.ops.misc import FrozenBatchNorm2d
 
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.utils import log_model_loading_keys
+
+# Ensure processor steps register with the pipeline registry on import.
+from lerobot.policies.act import processor_act as _act_processor  # noqa: F401
 from lerobot.utils.constants import (
     ACTION,
     OBS_ENV_STATE,
@@ -166,6 +170,38 @@ class ACTPolicy(PreTrainedPolicy):
             loss = l1_loss
 
         return loss, loss_dict
+
+    def state_dict(self, *args, **kwargs):
+        # Skip saving the frozen language encoder to avoid safetensors aliasing issues.
+        state_dict = super().state_dict(*args, **kwargs)
+        lang_prefix = "model.language_encoder"
+        keys_to_drop = [key for key in state_dict if key.startswith(lang_prefix)]
+        for key in keys_to_drop:
+            state_dict.pop(key)
+        return state_dict
+
+    def load_state_dict(self, state_dict: dict[str, Tensor], strict: bool = True):  # type: ignore[override]
+        # Drop language encoder weights from older checkpoints to avoid unexpected-key errors.
+        lang_prefix = "model.language_encoder"
+        filtered_state_dict = {
+            key: value for key, value in state_dict.items() if not key.startswith(lang_prefix)
+        }
+        return super().load_state_dict(filtered_state_dict, strict=strict)
+
+    @classmethod
+    def _load_as_safetensor(cls, model, model_file: str, map_location: str, strict: bool):
+        from safetensors.torch import load_file
+
+        state_dict = load_file(model_file, device=map_location)
+        lang_prefix = "model.language_encoder"
+        filtered_state_dict = {
+            key: value for key, value in state_dict.items() if not key.startswith(lang_prefix)
+        }
+        missing_keys, unexpected_keys = model.load_state_dict(filtered_state_dict, strict=strict)
+        log_model_loading_keys(missing_keys, unexpected_keys)
+        model.to(map_location)
+        model.eval()
+        return model
 
 
 class ACTTemporalEnsembler:
@@ -506,21 +542,25 @@ class ACT(nn.Module):
         # Language conditioning token
         if self.config.use_language_conditioning:
             # Get tokens from batch (preprocessed by ACTLanguageTokenizerStep)
-            lang_tokens = batch[OBS_LANGUAGE_TOKENS]  # (B, max_length)
-            lang_attention_mask = batch[OBS_LANGUAGE_ATTENTION_MASK]  # (B, max_length)
+
+            lang_tokens = batch[OBS_LANGUAGE_TOKENS]
+            lang_attention_mask = batch[OBS_LANGUAGE_ATTENTION_MASK]
+            lang_attention_mask_bool = lang_attention_mask.bool()
+            lang_tokens_long = lang_tokens.long()
+            lang_attention_mask_long = lang_attention_mask.long()
             
             # Encode language
             if self.config.freeze_language_encoder:
                 self.language_encoder.eval()
                 with torch.no_grad():
                     encoder_outputs = self.language_encoder(
-                        input_ids=lang_tokens,
-                        attention_mask=lang_attention_mask,
+                        input_ids=lang_tokens_long,
+                        attention_mask=lang_attention_mask_long,
                     )
             else:
                 encoder_outputs = self.language_encoder(
-                    input_ids=lang_tokens,
-                    attention_mask=lang_attention_mask,
+                    input_ids=lang_tokens_long,
+                    attention_mask=lang_attention_mask_long,
                 )
             
             # Pool embeddings based on pooling strategy
@@ -533,13 +573,13 @@ class ACT(nn.Module):
             elif self.config.language_pooling == "mean":
                 # Mean pooling over sequence (considering attention mask)
                 token_embeddings = encoder_outputs.last_hidden_state
-                input_mask_expanded = lang_attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+                input_mask_expanded = lang_attention_mask_bool.unsqueeze(-1).expand(token_embeddings.size()).float()
                 lang_emb = torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(
                     input_mask_expanded.sum(1), min=1e-9
                 )
             elif self.config.language_pooling == "max":
                 # Max pooling over sequence
-                lang_emb = encoder_outputs.last_hidden_state.max(dim=1)[0]
+                lang_emb = encoder_outputs.last_hidden_state.masked_fill(~lang_attention_mask_bool.unsqueeze(-1), float('-inf')).max(dim=1)[0]
             else:
                 raise ValueError(f"Unknown pooling strategy: {self.config.language_pooling}")
             

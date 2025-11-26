@@ -307,6 +307,15 @@ def record_loop(
         preprocessor.reset()
         postprocessor.reset()
 
+    # custom test START ##########################################
+    import yarp
+    real_time_ar = False
+    single_task_port = yarp.BufferedPortBottle()
+    single_task_port.open("/lerobot/record/single_task/i")
+    if yarp.Network.connect("/safsar/action_recognition/action:o", "/lerobot/record/single_task/i"):
+        real_time_ar = True
+    # custom test END ##########################################
+
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
@@ -325,6 +334,13 @@ def record_loop(
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
 
+        # If there is a yarp port named /safsar/action_recognition/action:o, single_task is read from it
+        if real_time_ar:
+            bottle = single_task_port.read(False)
+            if bottle is not None and not bottle.isNull():
+                single_task = bottle.get(0).asString()
+        print("Task overridden:", single_task)
+        
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
             action_values = predict_action(

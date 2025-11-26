@@ -9,7 +9,8 @@
       "program": "/home/sberti/metaCub/split_lerobot_dataset_by_action.py",
       "console": "integratedTerminal",
       "python": "/home/sberti/.local/share/mamba/envs/lerobot/bin/python",
-      "cwd": "/home/sberti/metaCub"
+      "cwd": "/home/sberti/metaCub",
+      "preLaunchTask": "clear-split"
     },
     {
       "name": "Test",
@@ -60,8 +61,9 @@
         "--policy.num_train_timesteps=100",
         "--dataset.repo_id=HSP-IIT/redball_sim",
         "--policy.device=cuda",
-        "--output_dir=checkpoints/hri2_splitted",
-        "--policy.use_language_conditioning=true"
+        "--output_dir=checkpoints/test",
+        "--policy.use_language_conditioning=true",
+        "--policy.language_dropout=0.0"
       ]
     },
     {
@@ -96,12 +98,13 @@
       "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_dataset_viz.py",
       "console": "integratedTerminal",
       "python": "/home/sberti/.local/share/mamba/envs/lerobot/bin/python",
-      "cwd": "/home/sberti/metaCub",
+      "cwd": "/home/sberti/metaCub/steb6/hri_ste_carmela_split",
       "env": {
         "PYTHONPATH": "${workspaceFolder}/src"
       },
       "args": [
-        "--repo-id=steb6/hri_real_3"
+        "--repo-id=steb6/hri_ste_carmela_split",
+        "--root=."
       ],
       "justMyCode": false
     },

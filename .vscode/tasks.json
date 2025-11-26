@@ -31,9 +31,23 @@
       }
     },
     {
+      "label": "clear-split",
+      "type": "shell",
+      "command": "rm -rf /home/sberti/metaCub/steb6/hri_ste_carmela_split",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
       "label": "clear-test",
       "type": "shell",
-      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/ar0s/eval_redball_sim",
+      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/steb6/eval_test",
       "options": {
         "cwd": "${workspaceFolder}"
       },

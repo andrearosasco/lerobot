@@ -81,10 +81,10 @@ class ACTLanguageTokenizerStep(ProcessorStep):
             return_tensors="pt",
         )
         
-        # Add to observation
+        # Add to observation (keep batch dim so downstream batching doesn't drop it)
         observation = dict(transition.get(TransitionKey.OBSERVATION, {}))
-        observation[OBS_LANGUAGE_TOKENS] = tokenized["input_ids"].squeeze(0)  # Remove batch dim
-        observation[OBS_LANGUAGE_ATTENTION_MASK] = tokenized["attention_mask"].squeeze(0).bool()
+        observation[OBS_LANGUAGE_TOKENS] = tokenized["input_ids"]
+        observation[OBS_LANGUAGE_ATTENTION_MASK] = tokenized["attention_mask"].bool()
         
         transition[TransitionKey.OBSERVATION] = observation
         
