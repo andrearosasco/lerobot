@@ -200,6 +200,9 @@ class YarpCamera(Camera):
             
             if "rgb" in data:
                 image = data["rgb"]
+
+                if (image==0).all():
+                    raise Exception("The image is all black!")
                 
                 # Apply color mode conversion if needed
                 if self.config.color_mode.value == "bgr":
