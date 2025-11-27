@@ -36,6 +36,11 @@ from torchvision.ops.misc import FrozenBatchNorm2d
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import log_model_loading_keys
+from lerobot.policies.utils.language_encoder import (
+    LanguageEncoder,
+    LanguageProjection,
+    filter_language_encoder_from_state_dict,
+)
 
 # Ensure processor steps register with the pipeline registry on import.
 from lerobot.policies.act import processor_act as _act_processor  # noqa: F401
@@ -174,18 +179,11 @@ class ACTPolicy(PreTrainedPolicy):
     def state_dict(self, *args, **kwargs):
         # Skip saving the frozen language encoder to avoid safetensors aliasing issues.
         state_dict = super().state_dict(*args, **kwargs)
-        lang_prefix = "model.language_encoder"
-        keys_to_drop = [key for key in state_dict if key.startswith(lang_prefix)]
-        for key in keys_to_drop:
-            state_dict.pop(key)
-        return state_dict
+        return filter_language_encoder_from_state_dict(state_dict)
 
     def load_state_dict(self, state_dict: dict[str, Tensor], strict: bool = True):  # type: ignore[override]
         # Drop language encoder weights from older checkpoints to avoid unexpected-key errors.
-        lang_prefix = "model.language_encoder"
-        filtered_state_dict = {
-            key: value for key, value in state_dict.items() if not key.startswith(lang_prefix)
-        }
+        filtered_state_dict = filter_language_encoder_from_state_dict(state_dict)
         return super().load_state_dict(filtered_state_dict, strict=strict)
 
     @classmethod
@@ -193,10 +191,7 @@ class ACTPolicy(PreTrainedPolicy):
         from safetensors.torch import load_file
 
         state_dict = load_file(model_file, device=map_location)
-        lang_prefix = "model.language_encoder"
-        filtered_state_dict = {
-            key: value for key, value in state_dict.items() if not key.startswith(lang_prefix)
-        }
+        filtered_state_dict = filter_language_encoder_from_state_dict(state_dict)
         missing_keys, unexpected_keys = model.load_state_dict(filtered_state_dict, strict=strict)
         log_model_loading_keys(missing_keys, unexpected_keys)
         model.to(map_location)
@@ -395,38 +390,18 @@ class ACT(nn.Module):
         
         # Language conditioning components
         if self.config.use_language_conditioning:
-            # Load language encoder
-            if config.language_encoder_type == "clip":
-                from transformers import CLIPTextModel
-                self.language_encoder = CLIPTextModel.from_pretrained(config.language_model_name)
-            elif config.language_encoder_type == "bert":
-                from transformers import BertModel
-                self.language_encoder = BertModel.from_pretrained(config.language_model_name)
-            elif config.language_encoder_type == "t5":
-                from transformers import T5EncoderModel
-                self.language_encoder = T5EncoderModel.from_pretrained(config.language_model_name)
-            else:
-                raise ValueError(f"Unsupported language_encoder_type: {config.language_encoder_type}")
-            
-            # Freeze language encoder if specified
-            if config.freeze_language_encoder:
-                for param in self.language_encoder.parameters():
-                    param.requires_grad = False
-            
-            # Get embedding dimension from encoder
-            self.language_embedding_dim = self.language_encoder.config.hidden_size
-            
-            # Projection layers
-            proj_dim = config.language_projection_dim or config.dim_model
-            self.language_projection = nn.Linear(self.language_embedding_dim, proj_dim)
-            
-            if proj_dim != config.dim_model:
-                self.language_to_model = nn.Linear(proj_dim, config.dim_model)
-            else:
-                self.language_to_model = nn.Identity()
-            
-            self.language_dropout = nn.Dropout(config.language_dropout)
-            self.language_norm = nn.LayerNorm(config.dim_model)
+            self.language_encoder = LanguageEncoder(
+                encoder_type=config.language_encoder_type,
+                model_name=config.language_model_name,
+                pooling_strategy=config.language_pooling,
+                freeze=config.freeze_language_encoder,
+            )
+            self.language_projection = LanguageProjection(
+                encoder_dim=self.language_encoder.embedding_dim,
+                projection_dim=config.language_projection_dim,
+                model_dim=config.dim_model,
+                dropout=config.language_dropout,
+            )
         
         # Transformer encoder positional embeddings.
         n_1d_tokens = 1  # for the latent
@@ -541,53 +516,13 @@ class ACT(nn.Module):
         
         # Language conditioning token
         if self.config.use_language_conditioning:
-            # Get tokens from batch (preprocessed by ACTLanguageTokenizerStep)
-
+            # Get tokens from batch (preprocessed by LanguageTokenizerStep)
             lang_tokens = batch[OBS_LANGUAGE_TOKENS]
             lang_attention_mask = batch[OBS_LANGUAGE_ATTENTION_MASK]
-            lang_attention_mask_bool = lang_attention_mask.bool()
-            lang_tokens_long = lang_tokens.long()
-            lang_attention_mask_long = lang_attention_mask.long()
             
-            # Encode language
-            if self.config.freeze_language_encoder:
-                self.language_encoder.eval()
-                with torch.no_grad():
-                    encoder_outputs = self.language_encoder(
-                        input_ids=lang_tokens_long,
-                        attention_mask=lang_attention_mask_long,
-                    )
-            else:
-                encoder_outputs = self.language_encoder(
-                    input_ids=lang_tokens_long,
-                    attention_mask=lang_attention_mask_long,
-                )
-            
-            # Pool embeddings based on pooling strategy
-            if self.config.language_pooling == "cls":
-                # Use pooled output if available (CLIP, BERT), else first token
-                if hasattr(encoder_outputs, 'pooler_output') and encoder_outputs.pooler_output is not None:
-                    lang_emb = encoder_outputs.pooler_output
-                else:
-                    lang_emb = encoder_outputs.last_hidden_state[:, 0]
-            elif self.config.language_pooling == "mean":
-                # Mean pooling over sequence (considering attention mask)
-                token_embeddings = encoder_outputs.last_hidden_state
-                input_mask_expanded = lang_attention_mask_bool.unsqueeze(-1).expand(token_embeddings.size()).float()
-                lang_emb = torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(
-                    input_mask_expanded.sum(1), min=1e-9
-                )
-            elif self.config.language_pooling == "max":
-                # Max pooling over sequence
-                lang_emb = encoder_outputs.last_hidden_state.masked_fill(~lang_attention_mask_bool.unsqueeze(-1), float('-inf')).max(dim=1)[0]
-            else:
-                raise ValueError(f"Unknown pooling strategy: {self.config.language_pooling}")
-            
-            # Project to model dimension
+            # Encode and project language
+            lang_emb = self.language_encoder(lang_tokens, lang_attention_mask)
             lang_emb = self.language_projection(lang_emb)
-            lang_emb = self.language_to_model(lang_emb)
-            lang_emb = self.language_dropout(lang_emb)
-            lang_emb = self.language_norm(lang_emb)
             
             # Add to encoder inputs (after latent)
             encoder_in_tokens.append(lang_emb)

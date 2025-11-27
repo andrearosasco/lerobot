@@ -41,7 +41,16 @@ from lerobot.policies.utils import (
     get_output_shape,
     populate_queues,
 )
-from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
+from lerobot.policies.utils.language_encoder import (
+    LanguageEncoder,
+    LanguageProjection,
+    filter_language_encoder_from_state_dict,
+)
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
+
+
+# Ensure processor steps register with the pipeline registry on import.
+from lerobot.policies.diffusion import processor_diffusion as _diffusion_processor  # noqa: F401
 
 
 class DiffusionPolicy(PreTrainedPolicy):
@@ -146,6 +155,16 @@ class DiffusionPolicy(PreTrainedPolicy):
         # no output_dict so returning None
         return loss, None
 
+    def state_dict(self, *args, **kwargs):
+        # Skip saving the frozen language encoder to avoid safetensors aliasing issues.
+        state_dict = super().state_dict(*args, **kwargs)
+        return filter_language_encoder_from_state_dict(state_dict)
+
+    def load_state_dict(self, state_dict: dict[str, Tensor], strict: bool = True):  # type: ignore[override]
+        # Drop language encoder weights from older checkpoints to avoid unexpected-key errors.
+        filtered_state_dict = filter_language_encoder_from_state_dict(state_dict)
+        return super().load_state_dict(filtered_state_dict, strict=strict)
+
 
 def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMScheduler:
     """
@@ -178,6 +197,22 @@ class DiffusionModel(nn.Module):
                 global_cond_dim += self.rgb_encoder.feature_dim * num_images
         if self.config.env_state_feature:
             global_cond_dim += self.config.env_state_feature.shape[0]
+        
+        # Language conditioning components
+        if self.config.use_language_conditioning:
+            self.language_encoder = LanguageEncoder(
+                encoder_type=config.language_encoder_type,
+                model_name=config.language_model_name,
+                pooling_strategy=config.language_pooling,
+                freeze=config.freeze_language_encoder,
+            )
+            self.language_projection = LanguageProjection(
+                encoder_dim=self.language_encoder.embedding_dim,
+                projection_dim=config.language_projection_dim,
+                model_dim=config.diffusion_step_embed_dim,
+                dropout=config.language_dropout,
+            )
+            global_cond_dim += config.diffusion_step_embed_dim
 
         self.unet = DiffusionConditionalUnet1d(config, global_cond_dim=global_cond_dim * config.n_obs_steps)
 
@@ -238,6 +273,21 @@ class DiffusionModel(nn.Module):
         """Encode image features and concatenate them all together along with the state vector."""
         batch_size, n_obs_steps = batch[OBS_STATE].shape[:2]
         global_cond_feats = [batch[OBS_STATE]]
+        
+        # Language conditioning
+        if self.config.use_language_conditioning:
+            # Get tokens from batch (preprocessed by LanguageTokenizerStep)
+            lang_tokens = batch[OBS_LANGUAGE_TOKENS]
+            lang_attention_mask = batch[OBS_LANGUAGE_ATTENTION_MASK]
+            
+            # Encode and project language
+            lang_emb = self.language_encoder(lang_tokens, lang_attention_mask)
+            lang_emb = self.language_projection(lang_emb)
+            
+            # Expand to match n_obs_steps dimension: (B, D) -> (B, n_obs_steps, D)
+            lang_emb = lang_emb.unsqueeze(1).expand(-1, n_obs_steps, -1)
+            global_cond_feats.append(lang_emb)
+        
         # Extract image features.
         if self.config.image_features:
             if self.config.use_separate_rgb_encoder_per_camera:

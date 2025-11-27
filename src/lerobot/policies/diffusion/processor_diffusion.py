@@ -30,6 +30,7 @@ from lerobot.processor import (
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
+from lerobot.processor.language_tokenizer import LanguageTokenizerStep
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 
@@ -67,6 +68,16 @@ def make_diffusion_pre_post_processors(
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
     ]
+    
+    # Add language tokenization if language conditioning is enabled
+    if config.use_language_conditioning:
+        input_steps.append(
+            LanguageTokenizerStep(
+                tokenizer_name=config.language_model_name,
+                max_length=config.max_token_length,
+                task_key="task",
+            )
+        )
     
     # Add image resize step if resize_shape is specified
     if config.resize_shape is not None:

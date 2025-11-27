@@ -47,7 +47,7 @@
     {
       "label": "clear-test",
       "type": "shell",
-      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/steb6/eval_test",
+      "command": "rm -rf /home/sberti/.cache/huggingface/lerobot/steb6/eval_test",
       "options": {
         "cwd": "${workspaceFolder}"
       },

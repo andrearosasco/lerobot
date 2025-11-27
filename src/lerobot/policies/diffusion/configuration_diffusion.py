@@ -154,6 +154,16 @@ class DiffusionConfig(PreTrainedConfig):
     # Loss computation
     do_mask_loss_for_padding: bool = False
 
+    # Language conditioning.
+    use_language_conditioning: bool = False
+    language_encoder_type: str = "clip"  # Options: "clip", "bert", "t5"
+    language_model_name: str = "openai/clip-vit-base-patch32"
+    freeze_language_encoder: bool = True
+    language_projection_dim: int | None = None  # If None, uses diffusion_step_embed_dim
+    language_dropout: float = 0.1
+    max_token_length: int = 77  # CLIP default
+    language_pooling: str = "cls"  # Options: "cls", "mean", "max"
+
     # Training presets
     optimizer_lr: float = 1e-4
     optimizer_betas: tuple = (0.95, 0.999)
@@ -169,6 +179,11 @@ class DiffusionConfig(PreTrainedConfig):
         if not self.vision_backbone.startswith("resnet"):
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
+            )
+
+        if self.use_language_conditioning and self.language_encoder_type not in ["clip", "bert", "t5"]:
+            raise ValueError(
+                f"language_encoder_type must be 'clip', 'bert', or 't5'. Got {self.language_encoder_type}."
             )
 
         supported_prediction_types = ["epsilon", "sample"]

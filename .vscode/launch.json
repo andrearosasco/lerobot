@@ -13,7 +13,7 @@
       "preLaunchTask": "clear-split"
     },
     {
-      "name": "Test",
+      "name": "Test (ACT)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_record.py",
@@ -26,18 +26,44 @@
         "--robot.type=ergocub",
         "--robot.remote_prefix=/ergocubSim",
         "--robot.local_prefix=/lerobot",
-        "--robot.cameras={ external: {\"type\": \"yarp\", \"yarp_name\": \"camera\", \"width\": 640, \"height\": 480, \"fps\": 30}, egocentric:{\"type\": \"yarp\", \"yarp_name\": \"ergocubSim/depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
-        "--robot.control_boards=[head,left_hand,right_hand,fingers]",
-        "--dataset.repo_id=ar0s/eval_redball_sim",
+        "--robot.cameras={external:{\"type\": \"yarp\", \"yarp_name\": \"splitter/video:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
+        "--robot.control_boards=[head,left_hand,right_hand,fingers,torso]",
+        "--dataset.repo_id=steb6/eval_test",
         "--dataset.fps=10",
-        "--policy.path=ar0s/dp-redball",
+        "--policy.path=steb6/react_hri_ste_carmela_split_no_label",
+        // "--policy.path=steb6/react_hri_ste_carmela_split",
+        // "--policy.use_language_conditioning=true",
+        "--dataset.single_task=get the ball",
+        "--dataset.reset_time=0",
+        "--dataset.episode_time=600",
+      ]
+    },
+    {
+      "name": "Test (DP)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_record.py",
+      "console": "integratedTerminal",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      },
+      "preLaunchTask": "clear-test",
+      "args": [
+        "--robot.type=ergocub",
+        "--robot.remote_prefix=/ergocubSim",
+        "--robot.local_prefix=/lerobot",
+        "--robot.cameras={egocentric:{\"type\": \"yarp\", \"yarp_name\": \"ergocubSim/depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
+        "--robot.control_boards=[head,left_hand,right_hand,fingers,torso]",
+        "--dataset.repo_id=steb6/eval_test",
+        "--dataset.fps=10",
+        "--policy.path=/home/sberti/lerobot/checkpoints/redball_sim_reactive/checkpoints/040000/pretrained_model",
         "--policy.crop_shape=null",
         "--policy.resize_shape=[240,320]",
         "--policy.noise_scheduler_type=DDIM",
         "--policy.num_inference_steps=10",
         "--dataset.single_task=get the ball",
         "--dataset.reset_time=0",
-        "--dataset.episode_time=10",
+        "--dataset.episode_time=600",
       ]
     },
     {
@@ -54,16 +80,16 @@
         "--batch_size=8",
         "--num_workers=4",
         "--policy.type=diffusion",
-        "--policy.repo_id=steb6/dp_hri_ste_carmela_split_no_labels",
+        "--policy.repo_id=steb6/dp_hri_ste_carmela_split",
         "--policy.crop_shape=null",
         "--policy.resize_shape=[240,320]",
         "--policy.noise_scheduler_type=DDIM",
         "--policy.num_train_timesteps=100",
         "--dataset.repo_id=steb6/hri_ste_carmela_split",
         "--policy.device=cuda",
-        "--output_dir=checkpoints/dp_hri_ste_carmela_split_no_labels"
-        // "--policy.use_language_conditioning=true",
-        // "--policy.language_dropout=0.0"
+        "--output_dir=checkpoints/dp_hri_ste_carmela_split",
+        "--policy.use_language_conditioning=true",
+        "--policy.language_dropout=0.0"
       ]
     },
     {
@@ -83,11 +109,11 @@
         "--robot.cameras={egocentric:{\"type\": \"yarp\", \"yarp_name\": \"ergocubSim/depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
         "--robot.control_boards=[head,left_hand,right_hand,fingers,torso]",
         "--teleop.type=metaquest",
-        "--dataset.repo_id=steb6/test2",
-        "--dataset.num_episodes=1",
+        "--dataset.repo_id=steb6/redball_sim_reactive",
+        "--dataset.num_episodes=50",
         "--dataset.fps=10",
-        "--dataset.reset_time=1",
-        "--dataset.episode_time=30",
+        "--dataset.reset_time=0",
+        "--dataset.episode_time=15",
         "--dataset.single_task=get the ball"
       ]
     },
