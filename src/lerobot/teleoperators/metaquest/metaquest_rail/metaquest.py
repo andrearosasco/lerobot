@@ -131,9 +131,9 @@ class MetaQuestRail(Teleoperator):
             "orientation.y": vr_axis_angle[1],
             "orientation.z": vr_axis_angle[2],
             "gripper": gripper_state,
-            "is_engaged": rg_state,
-            "exit_episode": a_state,
-            "discard_episode": b_state
+            "is_engaged": float(rg_state), # Store as float for compatibility
+            "exit_episode": float(a_state),
+            "discard_episode": float(b_state)
         }
         
         return action
@@ -157,13 +157,13 @@ class MetaQuestRail(Teleoperator):
             "gripper": float,
             
             # Engagement state
-            "is_engaged": bool,
+            "is_engaged": float,
             
             # Exit signal
-            "exit_episode": bool,
+            "exit_episode": float,
             
             # Discard signal
-            "discard_episode": bool,
+            "discard_episode": float,
         }
 
     @property

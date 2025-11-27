@@ -1,6 +1,9 @@
 import time
 import numpy as np
 import rclpy
+import roboticstoolbox as rtb
+from scipy.spatial.transform import Rotation as R
+from spatialmath import SE3
 from rclpy.node import Node
 from panda_interface.srv import ApplyCommands, Connect, GetSensors, Close
 from panda_interface.msg import PandaCommand
@@ -67,6 +70,7 @@ class Panda(Node):
     def __init__(self, config: PandaConfig = None, **kwargs):
         super().__init__('panda_client')
         self.config = config if config else PandaConfig()
+        self.robot_model = rtb.models.Panda()
 
         self.client_names = {}
         for name, type in Panda.interfaces.items():
@@ -84,7 +88,35 @@ class Panda(Node):
         rclpy.spin_until_future_complete(self, self.future)
         return self.future.result()
 
-    def apply_commands(self, q_desired=None, kp=None, kd=None, gain=4.):
+    def apply_commands(self, action=None, q_desired=None, kp=None, kd=None, gain=4.):
+        if action is not None:
+            # Extract action components
+            eef_pos = np.array([
+                action["position.x"],
+                action["position.y"],
+                action["position.z"]
+            ])
+            
+            # Orientation is axis-angle
+            axis_angle = np.array([
+                action["orientation.x"],
+                action["orientation.y"],
+                action["orientation.z"]
+            ])
+            
+            # Convert axis-angle to rotation matrix
+            eef_rot = R.from_rotvec(axis_angle).as_matrix()
+            
+            # Get current joint positions for IK seed
+            request = Panda.interfaces['get_sensors'].Request()
+            self.future = self.client_names['get_sensors'].call_async(request)
+            rclpy.spin_until_future_complete(self, self.future)
+            state = self.future.result().state
+            qpos = np.array(state.position)
+            
+            # IK
+            q_desired = self.compute_ik(eef_pos, eef_rot, q_seed=qpos)
+
         request = Panda.interfaces['apply_commands'].Request()
         # Ensure q_desired is a list or array
         if isinstance(q_desired, np.ndarray):
@@ -101,21 +133,37 @@ class Panda(Node):
         rclpy.spin_until_future_complete(self, self.future)
 
         state = self.future.result().state
+        
+        q = np.array(state.position)
 
-        return {'arm_joint_pos': np.array(state.position), 'arm_joint_vel': np.array(state.velocity)}
+        Te = self.robot_model.fkine(q)
+        pos = Te.t
+        rot_matrix = Te.R
+        rot_axis_angle = R.from_matrix(rot_matrix).as_rotvec()
+
+        pos = {f"position.{k}": v for k,v in zip(["x", "y", "z"], pos)}
+        ori = {f"orientation.{k}": v for k,v in zip(["x", "y", "z"], rot_axis_angle)}
+
+        return {**pos, **ori}
+
+    def compute_ik(self, position, orientation, q_seed=None):
+        Tep = SE3.Rt(R=orientation, t=position)
+        sol = self.robot_model.ik_LM(Tep, q0=q_seed)
+        return sol[0]
 
     def close(self):
-        request = Panda.interfaces['close'].Request()
-        self.future = self.client_names['close'].call_async(request)
-        rclpy.spin_until_future_complete(self, self.future)
-        return self.future.result()
+        pass
 
     def reset(self):
         # Define home position
-        home_pos = np.array([0.0, 0.0, 0.0, -2, 0.0, 2, 0.0])
+        home_pos = np.array([0.0, 0.0, 0.0, -2, 0.0, 2, 0.7854])
         
         # Get current position
-        current_pos = self.get_sensors()['arm_joint_pos']
+        request = Panda.interfaces['get_sensors'].Request()
+        self.future = self.client_names['get_sensors'].call_async(request)
+        rclpy.spin_until_future_complete(self, self.future)
+        state = self.future.result().state
+        current_pos = np.array(state.position)
         
         # Generate trajectory
         dt = 0.1
@@ -129,8 +177,6 @@ class Panda(Node):
 
     @property
     def features(self) -> dict:
-        features = {}
-        for i in range(7):
-            features[f"joint_{i}.pos"] = float
-            features[f"joint_{i}.vel"] = float
-        return features
+        pos = {f"position.{d}": float for d in ["x", "y", "z"]}
+        ori = {f"orientation.{d}": float for d in ["x", "y", "z"]}
+        return {**pos, **ori}

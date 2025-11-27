@@ -20,9 +20,7 @@ from typing import Any
 import numpy as np
 import cv2
 import torch
-import roboticstoolbox as rtb
 from scipy.spatial.transform import Rotation as R
-from spatialmath import SE3
 
 # ROS2 imports
 import rclpy
@@ -51,8 +49,6 @@ class CustomManipulator(Robot):
         self.arm_interface = make_arm_from_config(config.arm)
         self.gripper_interface = make_gripper_from_config(config.gripper)
             
-        self.robot_model = rtb.models.Panda()
-        
         self.cameras = make_cameras_from_configs(config.cameras)
         
         self.last_step = time.perf_counter()
@@ -66,16 +62,6 @@ class CustomManipulator(Robot):
         # Cameras
         for name, cfg in self.config.cameras.items():
             features[f"{name}_rgb"] = (cfg.height, cfg.width, 3)
-            if getattr(cfg, "use_depth", False):
-                 features[f"{name}_depth"] = (cfg.height, cfg.width, 1)
-                 
-        # EEF features
-        for i, axis in enumerate(["x", "y", "z"]):
-            features[f"eef_pos.{axis}"] = float
-            
-        for r in range(3):
-            for c in range(3):
-                features[f"eef_rot.{r}{c}"] = float
         
         return features
 
@@ -137,47 +123,10 @@ class CustomManipulator(Robot):
         obs_dict = {}
         arm_sensors = self.arm_interface.get_sensors()
         gripper_sensors = self.gripper_interface.get_sensors()
-        
-        # Flatten arm sensors
-        if 'arm_joint_pos' in arm_sensors:
-            q = arm_sensors['arm_joint_pos']
-            dq = arm_sensors['arm_joint_vel']
-            for i in range(len(q)):
-                obs_dict[f"joint_{i}.pos"] = q[i]
-                obs_dict[f"joint_{i}.vel"] = dq[i]
-        else:
-            obs_dict.update(arm_sensors)
-
-        # Flatten gripper sensors
-        if 'grip_joint_pos' in gripper_sensors:
-            obs_dict["gripper.pos"] = gripper_sensors['grip_joint_pos'][0]
-        else:
-            obs_dict.update(gripper_sensors)
-        
         for name, cam in self.cameras.items():
-            color = cam.read()
-            depth = cam.read_depth()
-            obs_dict[f'{name}_rgb'] = color
-            if depth is not None:
-                obs_dict[f'{name}_depth'] = depth
-
-        # Compute eef pose
-        if 'arm_joint_pos' in arm_sensors:
-            q = arm_sensors['arm_joint_pos']
-            Te = self.robot_model.fkine(q)
-            pos = Te.t
-            rot = Te.R
-            
-            for i, axis in enumerate(["x", "y", "z"]):
-                obs_dict[f"eef_pos.{axis}"] = pos[i]
-                
-            for r in range(3):
-                for c in range(3):
-                    obs_dict[f"eef_rot.{r}{c}"] = rot[r, c]
-            
-            # Add vector features for internal use (teleop)
-            obs_dict['eef_pos'] = pos
-            obs_dict['eef_rot'] = rot
+            obs_dict[f"{name}_rgb"] = cam.read()
+        
+        obs_dict = {**arm_sensors, **gripper_sensors, **obs_dict}
         
         return obs_dict
 
@@ -185,35 +134,11 @@ class CustomManipulator(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # Extract action components
-        eef_pos = np.array([
-            action["position.x"],
-            action["position.y"],
-            action["position.z"]
-        ])
-        
-        # Orientation is axis-angle
-        axis_angle = np.array([
-            action["orientation.x"],
-            action["orientation.y"],
-            action["orientation.z"]
-        ])
-        
-        # Convert axis-angle to rotation matrix
-        eef_rot = R.from_rotvec(axis_angle).as_matrix()
+        # Apply commands
+        self.arm_interface.apply_commands(action=action)
         
         grip = action["gripper"]
-        
-        # Get current joint positions for IK seed
-        qpos = self.arm_interface.get_sensors()['arm_joint_pos']
-
-        # IK
-        Tep = SE3.Rt(R=eef_rot, t=eef_pos)
-        sol = self.robot_model.ik_LM(Tep, q0=qpos)
-        
-        # Apply commands
-        self.arm_interface.apply_commands(q_desired=sol[0])
-        self.gripper_interface.apply_commands(width=grip)
+        self.gripper_interface.apply_commands(gripper_state=grip)
         
         # Wait for step time (simple rate limiting)
         # In original code: while (time.perf_counter() - self.last_step) < (1/20): pass
@@ -227,6 +152,6 @@ class CustomManipulator(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
         
-        self.gripper_interface.reset()
         self.arm_interface.reset()
+        self.gripper_interface.reset()
 

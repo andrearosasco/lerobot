@@ -20,6 +20,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from pprint import pformat
 
+from lerobot.robots.custom_manipulator.grippers.panda_gripper import PandaGripperConfig
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
@@ -82,68 +83,49 @@ class MetaQuestRelativeMotionProcessor(ProcessorStep):
         obs = transition["observation"]
         # action and obs are dicts
         
-        engaged = bool(action["is_engaged"])
-        
         # Extract VR pose (axis-angle)
         vr_pos = np.array([action["position.x"], action["position.y"], action["position.z"]])
         vr_rot_vec = np.array([action["orientation.x"], action["orientation.y"], action["orientation.z"]])
         vr_rot = R.from_rotvec(vr_rot_vec)
         
-        # Extract Robot pose (rotation matrix)
-        eef_pos = obs["eef_pos"]
-        eef_rot_matrix = obs["eef_rot"]
-        eef_rot = R.from_matrix(eef_rot_matrix)
+        # Extract Robot pose (axis-angle)
+        eef_pos = np.array([obs[f"position.{d}"] for d in ['x', 'y', 'z']])
+        eef_rot_vec = np.array([obs[f"orientation.{d}"] for d in ['x', 'y', 'z']])
+        eef_rot = R.from_rotvec(eef_rot_vec)
 
-        if engaged:
-            if not self.engaged_prev:
-                # Rising edge: set origins
-                self.vr_origin_pos = vr_pos
-                self.vr_origin_rot = vr_rot
-                self.eef_origin_pos = eef_pos
-                self.eef_origin_rot = eef_rot
-            
-            # Calculate relative motion
-            rel_pos = vr_pos - self.vr_origin_pos
-            target_pos = self.eef_origin_pos + rel_pos
-            
-            # Calculate relative rotation in global frame (VR)
-            # R_delta_global = R_current * R_origin^T
-            rel_rot_global = vr_rot * self.vr_origin_rot.inv()
-            
-            # Apply to robot origin in local frame (EEF)
-            # R_target = R_eef_origin * R_delta_global
-            target_rot = self.eef_origin_rot * rel_rot_global
-            
-            # Convert back to axis angle for action
-            target_rot_vec = target_rot.as_rotvec()
-            
-            new_action = action.copy()
-            new_action["position.x"] = target_pos[0]
-            new_action["position.y"] = target_pos[1]
-            new_action["position.z"] = target_pos[2]
-            new_action["orientation.x"] = target_rot_vec[0]
-            new_action["orientation.y"] = target_rot_vec[1]
-            new_action["orientation.z"] = target_rot_vec[2]
-            
-            self.engaged_prev = True
-            transition["action"] = new_action
-            return transition
-            
-        else:
-            self.engaged_prev = False
-            # Return current robot pose as action
-            eef_rot_vec = eef_rot.as_rotvec()
-            
-            new_action = action.copy()
-            new_action["position.x"] = eef_pos[0]
-            new_action["position.y"] = eef_pos[1]
-            new_action["position.z"] = eef_pos[2]
-            new_action["orientation.x"] = eef_rot_vec[0]
-            new_action["orientation.y"] = eef_rot_vec[1]
-            new_action["orientation.z"] = eef_rot_vec[2]
-            
-            transition["action"] = new_action
-            return transition
+        if not self.engaged_prev:
+            # Rising edge: set origins
+            self.vr_origin_pos = vr_pos
+            self.vr_origin_rot = vr_rot
+            self.eef_origin_pos = eef_pos
+            self.eef_origin_rot = eef_rot
+        
+        # Calculate relative motion
+        rel_pos = vr_pos - self.vr_origin_pos
+        target_pos = self.eef_origin_pos + rel_pos
+        
+        # Calculate relative rotation in global frame (VR)
+        # R_delta_global = R_current * R_origin^T
+        rel_rot_global = vr_rot * self.vr_origin_rot.inv()
+        
+        # Apply to robot origin in local frame (EEF)
+        # R_target = R_eef_origin * R_delta_global
+        target_rot = self.eef_origin_rot * rel_rot_global
+        
+        # Convert back to axis angle for action
+        target_rot_vec = target_rot.as_rotvec()
+        
+        new_action = action.copy()
+        new_action["position.x"] = target_pos[0]
+        new_action["position.y"] = target_pos[1]
+        new_action["position.z"] = target_pos[2]
+        new_action["orientation.x"] = target_rot_vec[0]
+        new_action["orientation.y"] = target_rot_vec[1]
+        new_action["orientation.z"] = target_rot_vec[2]
+        
+        self.engaged_prev = True
+        transition["action"] = new_action
+        return transition
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -228,6 +210,18 @@ def record_loop(
         elif policy is None and isinstance(teleop, Teleoperator):
             act = teleop.get_action()
 
+            # Check for exit signal from teleop (A button)
+            if act.pop("exit_episode"):
+                break
+
+            # Check for discard signal from teleop (B button)
+            if act.pop("discard_episode"):
+                events["rerecord_episode"] = True
+                break
+
+            if not act.pop("is_engaged"):
+                continue
+
             # Applies a pipeline to the raw teleop action, default is IdentityProcessor
             act_processed_teleop = teleop_action_processor((act, obs))
 
@@ -247,27 +241,12 @@ def record_loop(
             action_values = act_processed_teleop
             robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
 
-        # Send action to robot
-        # Action can eventually be clipped using `max_relative_target`,
-        # so action actually sent is saved in the dataset. action = postprocessor.process(action)
-        # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
-
-        # Check for exit signal from teleop (A button)
-        if action_values["exit_episode"]:
-            break
-
-        # Check for discard signal from teleop (B button)
-        if action_values["discard_episode"]:
-            events["rerecord_episode"] = True
-            break
-
         # Write to dataset ONLY if engaged
-        is_engaged = action_values["is_engaged"]
 
-        if is_engaged:
-            _sent_action = robot.send_action(robot_action_to_send)
+        
+        _sent_action = robot.send_action(robot_action_to_send)
 
-        if dataset is not None and is_engaged:
+        if dataset is not None:
             action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
             frame = {**observation_frame, **action_frame, "task": single_task}
             dataset.add_frame(frame)
@@ -293,19 +272,19 @@ def record_loop(
 @dataclass
 class DatasetRecordConfig:
     # Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).
-    repo_id: str = "user/dataset_name"
+    repo_id: str = "ar0s/panda-test"
     # A short but accurate description of the task performed during the recording
     single_task: str = "Pick up objects"
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
     root: str | Path | None = None
     # Limit the frames per second.
-    fps: int = 30
+    fps: int = 10
     # Number of seconds for data recording for each episode.
     episode_time_s: int | float = 6000
     # Number of seconds for resetting the environment after each episode.
-    reset_time_s: int | float = 30
+    reset_time_s: int | float = 0
     # Number of episodes to record.
-    num_episodes: int = 50
+    num_episodes: int = 2
     # Encode frames in the dataset into video
     video: bool = True
     # Upload dataset to Hugging Face hub.
@@ -332,9 +311,9 @@ class RecordConfig:
     robot: CustomManipulatorConfig = field(
         default_factory=lambda: CustomManipulatorConfig(
             arm=PandaConfig(),
-            # gripper=RobotiqConfig(),
+            gripper=PandaGripperConfig(),
             cameras={
-                # "wrist": RealSenseCameraConfig(serial_number_or_name="909522060544", use_depth=True, width=640, height=480, fps=30),
+                "wrist": RealSenseCameraConfig(serial_number_or_name="728612070403", use_depth=False, width=640, height=480, fps=30),
                 # "right": RealSenseCameraConfig(serial_number_or_name="123622270882", use_depth=True, width=640, height=480, fps=30),
             }
         )
@@ -444,6 +423,7 @@ def record(cfg: RecordConfig):
             ):
                 log_say("Reset the environment", cfg.play_sounds)
                 robot.reset()
+                teleop_action_processor.reset()
 
             if events["rerecord_episode"]:
                 log_say("Re-record episode", cfg.play_sounds)
