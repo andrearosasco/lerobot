@@ -1,0 +1,46 @@
+# To create an environment compatible with the panda setup run:
+# conda env create -f lerobot/panda.yml
+# then activate it and install the rest of the lerobot dependencies:
+# pip install -e . 
+# Intstall the oculus interface following the instructions at:
+# https://github.com/rail-berkeley/oculus_reader.git
+# Finally clone the controller library and install it:
+# git clone https://github.com/andrearosasco/panda-ros2.git
+# cd panda-ros2 && colcon build --merge-install --install-base ${CONDA_PREFIX}
+
+# You can collect a dataset by running:
+# ros2 launch panda_control panda_control.launch.py
+# to start the robot interface, and:
+# python src/lerobot/robots/custom_manipulator/record.py
+# to start the teleoperation and data collection script.
+
+name: lerobot
+channels:
+  - robostack-staging
+  - conda-forge
+dependencies:
+  - python=3.10
+  - ros-humble-ros-base
+  - compilers 
+  - cmake
+  - pkg-config
+  - make
+  - ninja
+  - colcon-common-extensions
+  - ros-humble-control-msgs
+  - catkin_tools
+  - librealsense=2.54.2=py310h2ab81a5_1_cuda
+  - scipy
+  - ffmpeg=7.1.1
+  - numpy=1.26.4
+  - pip:
+    - rerun-sdk==0.17.0
+    - pyserial
+    - clearconf
+    - roboticstoolbox-python
+    - panda-python
+    - debugpy
+# visuualizer dependencies 
+    - pycollada
+    - urdf-parser-py
+    - trimesh
