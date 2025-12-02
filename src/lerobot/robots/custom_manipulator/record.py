@@ -21,7 +21,6 @@ from pathlib import Path
 from pprint import pformat
 
 from lerobot.robots.custom_manipulator.grippers.panda_gripper import PandaGripperConfig
-import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from lerobot.cameras.realsense import RealSenseCameraConfig
@@ -35,18 +34,16 @@ from lerobot.processor import (
     RobotAction,
     RobotObservation,
     RobotProcessorPipeline,
-    ProcessorStep,
-    EnvTransition,
 )
 from lerobot.processor.converters import (
     robot_action_observation_to_transition,
     transition_to_robot_action,
 )
-from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.robots.custom_manipulator.config_custom_manipulator import CustomManipulatorConfig
 from lerobot.robots.custom_manipulator.arms.panda import PandaConfig
 from lerobot.robots.custom_manipulator.grippers.robotiq import RobotiqConfig
 from lerobot.robots.custom_manipulator.custom_manipulator import CustomManipulator
+from lerobot.robots.custom_manipulator.processor.metaquest_processor import MetaQuestRelativeMotionProcessor
 from lerobot.teleoperators.metaquest.metaquest_rail.configuration_metaquest import MetaQuestRailConfig
 from lerobot.teleoperators.metaquest.metaquest_rail.metaquest import MetaQuestRail
 from lerobot.utils.control_utils import sanity_check_dataset_name, sanity_check_dataset_robot_compatibility, is_headless
@@ -67,70 +64,58 @@ from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from lerobot.utils.control_utils import predict_action
 from typing import Any
 
-class MetaQuestRelativeMotionProcessor(ProcessorStep):
-    def __init__(self):
-        self.reset()
+import rerun as rr
 
-    def reset(self):
-        self.vr_origin_pos = None
-        self.vr_origin_rot = None
-        self.eef_origin_pos = None
-        self.eef_origin_rot = None
-        self.engaged_prev = False
-
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        action = transition["action"]
-        obs = transition["observation"]
-        # action and obs are dicts
-        
-        # Extract VR pose (axis-angle)
-        vr_pos = np.array([action["position.x"], action["position.y"], action["position.z"]])
-        vr_rot_vec = np.array([action["orientation.x"], action["orientation.y"], action["orientation.z"]])
-        vr_rot = R.from_rotvec(vr_rot_vec)
-        
-        # Extract Robot pose (axis-angle)
-        eef_pos = np.array([obs[f"position.{d}"] for d in ['x', 'y', 'z']])
-        eef_rot_vec = np.array([obs[f"orientation.{d}"] for d in ['x', 'y', 'z']])
-        eef_rot = R.from_rotvec(eef_rot_vec)
-
-        if not self.engaged_prev:
-            # Rising edge: set origins
-            self.vr_origin_pos = vr_pos
-            self.vr_origin_rot = vr_rot
-            self.eef_origin_pos = eef_pos
-            self.eef_origin_rot = eef_rot
-        
-        # Calculate relative motion
-        rel_pos = vr_pos - self.vr_origin_pos
-        target_pos = self.eef_origin_pos + rel_pos
-        
-        # Calculate relative rotation in global frame (VR)
-        # R_delta_global = R_current * R_origin^T
-        rel_rot_global = vr_rot * self.vr_origin_rot.inv()
-        
-        # Apply to robot origin in local frame (EEF)
-        # R_target = R_eef_origin * R_delta_global
-        target_rot = self.eef_origin_rot * rel_rot_global
-        
-        # Convert back to axis angle for action
-        target_rot_vec = target_rot.as_rotvec()
-        
-        new_action = action.copy()
-        new_action["position.x"] = target_pos[0]
-        new_action["position.y"] = target_pos[1]
-        new_action["position.z"] = target_pos[2]
-        new_action["orientation.x"] = target_rot_vec[0]
-        new_action["orientation.y"] = target_rot_vec[1]
-        new_action["orientation.z"] = target_rot_vec[2]
-        
-        self.engaged_prev = True
-        transition["action"] = new_action
-        return transition
-
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        return features
+#  +---------------------------------------------------------------------------------------+
+#  |                                          record_loop                                  |
+#  +---------------------------------------------------------------------------------------+
+#  | Legend: [variable] (function)                                                         |
+#  |                                                                                       |
+#  |      [Robot]                                                                          |
+#  |         |                                                                             |
+#  |         v                                                                             |
+#  |       [obs] ---------------------------------------+                                  |
+#  |         |                                          |                                  |
+#  |         v                                          |                                  |
+#  | (robot_observation_processor)                      |                                  |
+#  |         |                                          |                                  |
+#  |         v                                          |                                  |
+#  |   [obs_processed]                                  |                                  |
+#  |         |                                          |                                  |
+#  |         v                                          |                                  |
+#  | (build_dataset_frame)                              |                                  |
+#  |         |                                          |                                  |
+#  |         v                                          |                                  |
+#  | [observation_frame] -------------------------------|---------------------------+      |
+#  |         |                                          |                           |      |
+#  |         | (if Policy)                              |                           |      |
+#  |         v                                          |                           |      |
+#  |  (predict_action)       [Teleop]                   |                           |      |
+#  |         |                  |                       |                           |      |
+#  |         v                  v                       |                           |      |
+#  |  [action_values]         [act]                     |                           |      |
+#  |         |                  |                       |                           |      |
+#  |         v                  v                       |                           |      |
+#  | (make_robot_action) (teleop_action_processor) <----+                           |      |
+#  |         |                  |                       |                           |      |
+#  |         v                  v                       |                           |      |
+#  | [act_processed_policy] [act_processed_teleop]      |                           |      |
+#  |         |                  |                       |                           |      |
+#  |         +--------+---------+                       |                           |      |
+#  |                  |                                 |                           |      |
+#  |                  v                                 |                           |      |
+#  |           [action_values] -->(build_dataset_frame)-|-->[action_frame]------+   |      |
+#  |                  |                                 |                       |   |      |
+#  |                  v                                 |                       v   v      |
+#  |        (robot_action_processor) <------------------+                     [Dataset]    |
+#  |                  |                                                                    |
+#  |                  v                                                                    |
+#  |        [robot_action_to_send]                                                         |
+#  |                  |                                                                    |
+#  |                  v                                                                    |
+#  |               [Robot]                                                                 |
+#  |                                                                                       |
+#  +---------------------------------------------------------------------------------------+
 
 @safe_stop_image_writer
 def record_loop(
@@ -210,6 +195,11 @@ def record_loop(
         elif policy is None and isinstance(teleop, Teleoperator):
             act = teleop.get_action()
 
+            rr.log('oculus_frame', rr.Transform3D(translation=[act["position.x"], act["position.y"], act["position.z"]],
+                                                  mat3x3=R.from_rotvec([act["orientation.x"], act["orientation.y"], act["orientation.z"]]).as_matrix(),
+                                                  axis_length=0.1)
+            )
+
             # Check for exit signal from teleop (A button)
             if act.pop("exit_episode"):
                 break
@@ -220,6 +210,7 @@ def record_loop(
                 break
 
             if not act.pop("is_engaged"):
+                teleop_action_processor.reset()
                 continue
 
             # Applies a pipeline to the raw teleop action, default is IdentityProcessor
@@ -272,19 +263,19 @@ def record_loop(
 @dataclass
 class DatasetRecordConfig:
     # Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).
-    repo_id: str = "ar0s/panda-test"
+    repo_id: str = "ar0s/pick-turtle"
     # A short but accurate description of the task performed during the recording
-    single_task: str = "Pick up objects"
+    single_task: str = "Pick up the turtle"
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
     root: str | Path | None = None
     # Limit the frames per second.
     fps: int = 10
     # Number of seconds for data recording for each episode.
-    episode_time_s: int | float = 6000
+    episode_time_s: int | float = 60000
     # Number of seconds for resetting the environment after each episode.
     reset_time_s: int | float = 0
     # Number of episodes to record.
-    num_episodes: int = 2
+    num_episodes: int = 10
     # Encode frames in the dataset into video
     video: bool = True
     # Upload dataset to Hugging Face hub.
@@ -314,16 +305,16 @@ class RecordConfig:
             gripper=PandaGripperConfig(),
             cameras={
                 "wrist": RealSenseCameraConfig(serial_number_or_name="728612070403", use_depth=False, width=640, height=480, fps=30),
-                # "right": RealSenseCameraConfig(serial_number_or_name="123622270882", use_depth=True, width=640, height=480, fps=30),
+                "left": RealSenseCameraConfig(serial_number_or_name="123622270882", use_depth=False, width=640, height=480, fps=30),
             }
         )
     )
     teleop: MetaQuestRailConfig = field(default_factory=MetaQuestRailConfig)
     dataset: DatasetRecordConfig = field(default_factory=DatasetRecordConfig)
     
-    display_data: bool = False
+    display_data: bool = True
     play_sounds: bool = True
-    resume: bool = False
+    resume: bool = True
 
 @parser.wrap()
 def record(cfg: RecordConfig):
