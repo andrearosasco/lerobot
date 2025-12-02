@@ -101,8 +101,16 @@ class DiffusionPolicy(PreTrainedPolicy):
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """Predict a chunk of actions given environment observations."""
+
+        # Get language part
+        language_tokens = {k: batch[k] for k in [OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK] if k in batch}
+
         # stack n latest observations from the queue
         batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
+
+        # Add language part back
+        batch.update(language_tokens)
+
         actions = self.diffusion.generate_actions(batch, noise=noise)
 
         return actions

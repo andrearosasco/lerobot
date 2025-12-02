@@ -141,9 +141,23 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         if packaging.version.parse(safetensors.__version__) >= packaging.version.parse("0.4.3"):
             kwargs["device"] = map_location
 
-        # Load the model with appropriate kwargs
-        missing_keys, unexpected_keys = load_model_as_safetensor(model, model_file, **kwargs)
-        log_model_loading_keys(missing_keys, unexpected_keys)
+        try:
+            # Load the model with appropriate kwargs
+            missing_keys, unexpected_keys = load_model_as_safetensor(model, model_file, **kwargs)
+            log_model_loading_keys(missing_keys, unexpected_keys)
+        except RuntimeError as e:
+            if "shared tensors" in str(e) or "covering the entire storage" in str(e):
+                logging.warning(
+                    f"Failed to load model directly due to shared tensors: {e}\n"
+                    "Falling back to loading via state dict with tensor cloning..."
+                )
+                # Load state dict and clone all tensors to break sharing
+                state_dict = safetensors.torch.load_file(model_file, device=map_location)
+                cloned_state_dict = {k: v.clone().detach().contiguous() for k, v in state_dict.items()}
+                missing_keys, unexpected_keys = model.load_state_dict(cloned_state_dict, strict=strict)
+                log_model_loading_keys(missing_keys, unexpected_keys)
+            else:
+                raise
 
         # For older versions, manually move to device if needed
         if "device" not in kwargs and map_location != "cpu":
