@@ -44,6 +44,7 @@ from lerobot.robots.custom_manipulator.arms.panda import PandaConfig
 from lerobot.robots.custom_manipulator.grippers.robotiq import RobotiqConfig
 from lerobot.robots.custom_manipulator.custom_manipulator import CustomManipulator
 from lerobot.robots.custom_manipulator.processor.metaquest_processor import MetaQuestRelativeMotionProcessor
+from lerobot.robots.custom_manipulator.processor.rotation_converters import AxisAngleToRot6D, Rot6DToAxisAngle
 from lerobot.teleoperators.metaquest.metaquest_rail.configuration_metaquest import MetaQuestRailConfig
 from lerobot.teleoperators.metaquest.metaquest_rail.metaquest import MetaQuestRail
 from lerobot.utils.control_utils import sanity_check_dataset_name, sanity_check_dataset_robot_compatibility, is_headless
@@ -330,10 +331,16 @@ def record(cfg: RecordConfig):
 
     # Create processors
     # We replace the default teleop_action_processor with our custom one
-    _, robot_action_processor, robot_observation_processor = make_default_processors()
+    _, _, robot_observation_processor = make_default_processors()
     
+    robot_action_processor = RobotProcessorPipeline(
+        steps=[Rot6DToAxisAngle()],
+        to_transition=robot_action_observation_to_transition,
+        to_output=transition_to_robot_action
+    )
+
     teleop_action_processor = RobotProcessorPipeline(
-        steps=[MetaQuestRelativeMotionProcessor()],
+        steps=[MetaQuestRelativeMotionProcessor(), AxisAngleToRot6D()],
         to_transition=robot_action_observation_to_transition,
         to_output=transition_to_robot_action
     )
