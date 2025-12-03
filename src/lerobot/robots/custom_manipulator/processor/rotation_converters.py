@@ -32,7 +32,23 @@ class AxisAngleToRot6D(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        # TODO: Update features to reflect 6D rotation
+        if PipelineFeatureType.ACTION in features:
+            action_features = features[PipelineFeatureType.ACTION]
+
+            # Check if we have the axis-angle keys
+            if "action.orientation.x" in action_features:
+                # Get the type from one of them
+                dtype = action_features["action.orientation.x"]
+
+                # Remove axis-angle keys
+                for key in ["action.orientation.x", "action.orientation.y", "action.orientation.z"]:
+                    if key in action_features:
+                        del action_features[key]
+
+                # Add 6D keys
+                for i in range(6):
+                    action_features[f"orientation_6d.{i}"] = PolicyFeature(type=dtype, shape=())
+
         return features
 
 class Rot6DToAxisAngle(ProcessorStep):
@@ -63,5 +79,22 @@ class Rot6DToAxisAngle(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        # TODO: Update features to reflect axis-angle
+        if PipelineFeatureType.ACTION in features:
+            action_features = features[PipelineFeatureType.ACTION]
+
+            # Check if we have the 6D keys
+            if "orientation_6d.0" in action_features:
+                # Get the type from one of them
+                dtype = action_features["orientation_6d.0"].type
+
+                # Remove 6D keys
+                for i in range(6):
+                    key = f"orientation_6d.{i}"
+                    if key in action_features:
+                        del action_features[key]
+
+                # Add axis-angle keys
+                for key in ["orientation.x", "orientation.y", "orientation.z"]:
+                    action_features[key] = PolicyFeature(type=dtype, shape=())
+
         return features

@@ -264,7 +264,7 @@ def record_loop(
 @dataclass
 class DatasetRecordConfig:
     # Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).
-    repo_id: str = "ar0s/pick-turtle"
+    repo_id: str = "ar0s/pick-turtle2"
     # A short but accurate description of the task performed during the recording
     single_task: str = "Pick up the turtle"
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
