@@ -17,18 +17,21 @@
         "--robot.local_prefix=/lerobot",
         "--robot.cameras={ external: {\"type\": \"yarp\", \"yarp_name\": \"camera\", \"width\": 640, \"height\": 480, \"fps\": 30}, egocentric:{\"type\": \"yarp\", \"yarp_name\": \"ergocubSim/depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
         "--robot.control_boards=[head,left_hand,right_hand,fingers]",
-        "--dataset.repo_id=steb6/eval_redballppp",
+        "--dataset.repo_id=ar0s/eval_redball_sim",
         "--dataset.fps=10",
-        "--policy.path=steb6/train-redball-act",
+        "--policy.path=ar0s/dp-redball",
+        "--policy.crop_shape=null",
+        "--policy.resize_shape=[240,320]",
+        "--policy.noise_scheduler_type=DDIM",
+        "--policy.num_inference_steps=10",
         "--dataset.single_task=get the ball",
         "--dataset.reset_time=0",
         "--dataset.episode_time=10",
-        "--dataset.fps=10"
       ]
     }
     ,
     {
-      "name": "Train",
+      "name": "Train (DP)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_train.py",
@@ -38,9 +41,15 @@
       },
       "preLaunchTask": "clear-test",
       "args": [
+        "--batch_size=8",
+        "--num_workers=4",
         "--policy.type=diffusion",
-        "--policy.repo_id=steb6/train-redball",
-        "--dataset.repo_id=steb6/redball",
+        "--policy.repo_id=ar0s/dp-redball",
+        "--policy.crop_shape=null",
+        "--policy.resize_shape=[240,320]",
+        "--policy.noise_scheduler_type=DDIM",
+        "--policy.num_train_timesteps=100",
+        "--dataset.repo_id=HSP-IIT/redball_sim",
         "--policy.device=cuda",
         "--output_dir=checkpoints/redball"
       ]

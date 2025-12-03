@@ -482,7 +482,15 @@ class DiffusionRgbEncoder(nn.Module):
 
         # Note: we have a check in the config class to make sure all images have the same shape.
         images_shape = next(iter(config.image_features.values())).shape
-        dummy_shape_h_w = config.crop_shape if config.crop_shape is not None else images_shape[1:]
+        
+        # Determine effective image dimensions after preprocessing
+        if config.crop_shape is not None:
+            dummy_shape_h_w = config.crop_shape
+        elif config.resize_shape is not None:
+            dummy_shape_h_w = config.resize_shape
+        else:
+            dummy_shape_h_w = images_shape[1:]
+            
         dummy_shape = (1, images_shape[0], *dummy_shape_h_w)
         feature_map_shape = get_output_shape(self.backbone, dummy_shape)[1:]
 
