@@ -57,15 +57,23 @@ CMD=(
 
 # Add policy-specific parameters
 case $POLICY in
-    pi0)
+    groot)  # inference every 1.2 seconds at 10 fps
         CMD+=(
-            --policy.chunk_size=10
-            --policy.n_action_steps=10
+            --policy.chunk_size=12
+            --policy.n_action_steps=12
             --policy.max_state_dim=36
             --policy.max_action_dim=36
         )
         ;;
-    smolvla)
+    pi0)  # inference every 0.5 seconds at 10 fps
+        CMD+=(
+            --policy.chunk_size=5
+            --policy.n_action_steps=5
+            --policy.max_state_dim=36
+            --policy.max_action_dim=36
+        )
+        ;;
+    smolvla)  # inference every 1.6 seconds (50/30=1.6 fps)
         CMD+=(
             --policy.chunk_size=16
             --policy.n_action_steps=16
@@ -73,13 +81,13 @@ case $POLICY in
             --policy.max_action_dim=36
         )
         ;;
-    act)
+    act)  # inference every 2 seconds at 10 fps
         CMD+=(
             --policy.chunk_size=20
             --policy.n_action_steps=20
         )
         ;;
-    diffusion)
+    diffusion)  # they use 10fps datasets, so default values are good
         CMD+=(
             --batch_size=8
             --num_workers=4
