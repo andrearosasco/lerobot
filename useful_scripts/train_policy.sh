@@ -57,12 +57,15 @@ CMD=(
 
 # Add policy-specific parameters
 case $POLICY in
-    groot)  # inference every 1.2 seconds at 10 fps
+    groot)  # inference every 1.6 seconds at 10 fps (max action_horizon=16 for pretrained models)
+        # NOTE: To use pretrained GROOT with custom action dims (e.g., 36 instead of 32):
+        # 1. Run: python useful_scripts/load_groot_custom_actionhead.py --action-dim 36 --pretrained-model nvidia/GR00T-N1.5-3B
+        # 2. Then train with: --policy.base_model_path=steb6/GR00T-N1.5-3B-head36
         CMD+=(
-            --policy.chunk_size=12
-            --policy.n_action_steps=12
-            --policy.max_state_dim=36
+            --policy.chunk_size=16
+            --policy.n_action_steps=16
             --policy.max_action_dim=36
+            --policy.base_model_path=steb6/GR00T-N1.5-3B-head36
         )
         ;;
     pi0)  # inference every 0.5 seconds at 10 fps
@@ -99,7 +102,7 @@ case $POLICY in
         ;;
     *)
         echo "Unknown policy: $POLICY"
-        echo "Available policies: pi0, smolvla, act, diffusion"
+        echo "Available policies: pi0, smolvla, act, diffusion, groot"
         exit 1
         ;;
 esac
