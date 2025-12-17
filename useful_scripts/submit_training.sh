@@ -8,6 +8,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --output=logs/slurm-%j.out
 #SBATCH --error=logs/slurm-%j.err
+#SBATCH --mem=128G
 
 # Usage: sbatch submit_training.sh <policy_name> <dataset_repo>
 # Example: sbatch submit_training.sh groot HSP-IIT/ergoPour_mergedV1
