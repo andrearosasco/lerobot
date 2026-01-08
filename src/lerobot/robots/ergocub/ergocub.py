@@ -40,7 +40,7 @@ class ErgoCub(Robot):
     def __init__(self, config: ErgoCubConfig):
         super().__init__(config)
         # Set YARP robot name for resource finding
-        os.environ["YARP_ROBOT_NAME"] = "ergoCubSN002"
+        os.environ["YARP_ROBOT_NAME"] = "ergoCubSN001"
 
         self.config = config
         self.session_id = uuid.uuid4()

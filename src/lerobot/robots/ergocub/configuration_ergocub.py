@@ -26,14 +26,14 @@ from lerobot.robots.config import RobotConfig
 class ErgoCubConfig(RobotConfig):
     name: str = "ergocub"
     # YARP remote prefix for observation ports
-    remote_prefix: str = "/ergocubSim"
+    remote_prefix: str = "/ergocub"
     # YARP local prefix for observation ports. A session ID will be appended.
     local_prefix: str = "/ergocub_dashboard"
     # Configuration for cameras (using standard LeRobot camera interface)
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
     # Enable/disable specific body parts
     control_boards: List[str] = field(
-        default_factory=lambda: ["head", "left_arm", "right_arm", "neck", "fingers"]
+        default_factory=lambda: ["head", "left_hand", "right_hand", "neck", "fingers"]
     )
     # Whether to use bimanual controller instead of separate arm controllers
     use_bimanual_controller: bool = True

@@ -19,6 +19,9 @@ import time
 from typing import Dict
 import math
 
+import numpy as np
+import torch
+
 import yarp
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.robots.ergocub.manipulator import Manipulator
@@ -126,11 +129,15 @@ class ErgoCubFingerController:
             # Add left hand joints (first 6 floats)
             for joint in self.joint_names:
                 value = left_finger_cmds.get(joint, 0.0)
+                if isinstance(value, (np.ndarray, torch.Tensor)):
+                    value = value.item()
                 finger_bottle.addFloat64(value)
             
             # Add right hand joints (next 6 floats)
             for joint in self.joint_names:
                 value = right_finger_cmds.get(joint, 0.0)
+                if isinstance(value, (np.ndarray, torch.Tensor)):
+                    value = value.item()
                 finger_bottle.addFloat64(value)
             
             # Send the bottle

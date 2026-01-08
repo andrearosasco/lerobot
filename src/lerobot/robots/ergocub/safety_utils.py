@@ -68,6 +68,8 @@ class HandSafetyChecker:
         """
         # Check for NaN values
         for key, value in action.items():
+            if not isinstance(value, np.ndarray):
+                value = np.array(value)
             if np.any(np.isnan(value)):
                 logger.debug("NaN value detected in action key: %s", key)
                 return False

@@ -188,7 +188,7 @@ class ErgoCubHeadController:
         
         # Add rotation matrix as nested bottle
         for i in range(9):
-            neck_cmd.addFloat64(rot_matrix[i])
+            neck_cmd.addFloat64(rot_matrix[i].astype(float))
         
         reply = yarp.Bottle()
         self.neck_cmd_port.write(neck_cmd, reply)

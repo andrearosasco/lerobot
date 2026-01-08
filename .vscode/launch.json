@@ -116,6 +116,79 @@
       "name": "Train (DP)",
       "type": "debugpy",
       "request": "launch",
+      "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_record.py",
+      "console": "integratedTerminal",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      },
+      "preLaunchTask": "clear-test",
+      "args": [
+        "--robot.type=ergocub",
+        "--robot.remote_prefix=/ergocub",
+        "--robot.local_prefix=/lerobot",
+        "--robot.cameras={egocentric:{\"type\": \"yarp\", \"yarp_name\": \"depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
+        "--robot.control_boards=[head,left_hand,right_hand,fingers,torso]",
+        "--dataset.repo_id=steb6/eval_test",
+        "--dataset.fps=10",
+        "--policy.path=HSP-IIT/dp_ergoPour_mergedV1",
+        // "--policy.crop_shape=null",
+        // "--policy.resize_shape=[240,320]",
+        // "--policy.noise_scheduler_type=DDIM",
+        "--policy.num_inference_steps=10",
+        "--dataset.num_episodes=10",
+        "--dataset.single_task=get the ball",
+        "--dataset.reset_time=0",
+        "--dataset.episode_time=15"
+        // "--policy.use_language_conditioning=true",
+        // "--dataset.single_task=stand",
+      ]
+    },
+    {
+      "name": "Train (ACT)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_train.py",
+      "console": "integratedTerminal",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      },
+      "args": [
+        "--wandb.enable=false",
+        "--policy.type=act",
+        "--policy.repo_id=steb6/act-stand-wave-sim-split",
+        "--dataset.repo_id=steb6/stand-wave-sim",
+        "--policy.device=cuda",
+        "--output_dir=checkpoints/act-stand-wave-sim-split",
+        "--policy.chunk_size=20",
+        "--policy.n_action_steps=20"
+      ]
+    },
+    {
+      "name": "Train (GROOT)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_train.py",
+      "console": "integratedTerminal",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      },
+      "args": [
+        "--wandb.enable=false",
+        "--policy.type=groot",
+        "--policy.repo_id=steb6/act-stand-wave-sim-split",
+        "--dataset.repo_id=steb6/stand-wave-sim",
+        "--policy.device=cuda",
+        "--output_dir=checkpoints/act-stand-wave-sim-split",
+        "--policy.chunk_size=16",
+        "--policy.n_action_steps=16",
+        "--policy.max_action_dim=36",
+        "--policy.base_model_path=steb6/GR00T-N1.5-3B-head36"
+      ]
+    },
+    {
+      "name": "Train (DP)",
+      "type": "debugpy",
+      "request": "launch",
       "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_train.py",
       "console": "integratedTerminal",
       "env": {
