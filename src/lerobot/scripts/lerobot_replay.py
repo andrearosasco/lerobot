@@ -73,7 +73,7 @@ from lerobot.utils.utils import (
 @dataclass
 class DatasetReplayConfig:
     # Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).
-    repo_id: str = "ar0s/ergocub-pick-plush"
+    repo_id: str = "HSP-IIT/ergoPour_mergedV1"
     # Episode to replay.
     episode: int = 0
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
