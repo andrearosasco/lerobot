@@ -207,7 +207,7 @@ class ImageTransformsConfig:
                 kwargs={"sharpness": (0.5, 1.5)},
             ),
             "affine": ImageTransformConfig(
-                weight=1.0,
+                weight=0.0,
                 type="RandomAffine",
                 kwargs={"degrees": (-5.0, 5.0), "translate": (0.05, 0.05)},
             ),

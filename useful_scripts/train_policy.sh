@@ -56,7 +56,6 @@ CMD=(
     --dataset.image_transforms.enable=true
     --dataset.image_transforms.max_num_transforms=3
     --dataset.image_transforms.random_order=true
-    --dataset.image_transforms.tfs.affine.weight=0.0
 )
 
 # Add policy-specific parameters
