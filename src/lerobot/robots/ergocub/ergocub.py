@@ -54,6 +54,12 @@ class ErgoCub(Robot):
         # Initialize safety checker
         self.safety_checker = HandSafetyChecker(position_tolerance=0.2)
         
+        # Human pose YARP connection (optional)
+        self._human_pose_port = None
+        self._human_pose_enabled = getattr(config, "enable_human_pose", False)
+        if self._human_pose_enabled:
+            self._human_pose_port_name = getattr(config, "human_pose_yarp_port", "/hpe/pose:o")
+            self._num_human_pose_joints = getattr(config, "num_human_pose_joints", 30)
 
         yarp.Network.init()
 
@@ -86,6 +92,17 @@ class ErgoCub(Robot):
         
         # Connect motor bus (hand and head controllers)
         self.bus.connect()
+        
+        # Connect human pose YARP port if enabled
+        if self._human_pose_enabled:
+            self._human_pose_port = yarp.Port()
+            port_name = f"/lerobot/ergocub/human_pose:i"
+            self._human_pose_port.open(port_name)
+            if yarp.Network.connect(self._human_pose_port_name, port_name):
+                logger.info(f"Connected to human pose port: {self._human_pose_port_name}")
+            else:
+                logger.warning(f"Failed to connect to human pose port: {self._human_pose_port_name}")
+        
         self._is_connected = True
 
         self.acc_state = self.bus.read_state()
@@ -107,6 +124,12 @@ class ErgoCub(Robot):
         
         # Disconnect motor bus
         self.bus.disconnect()
+        
+        # Close human pose port
+        if self._human_pose_port is not None:
+            self._human_pose_port.close()
+            self._human_pose_port = None
+        
         self._is_connected = False
         
         logger.info("%s disconnected.", self)
@@ -124,15 +147,58 @@ class ErgoCub(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
             
-        obs = {}
+        # Get motor states
+        state = self.bus.read_state()
         
-        # Read camera data using standard LeRobot interface
-        for cam_name, cam in self.cameras.items():
-            cam_data = cam.read()
-            if "image" in cam_data:
-                obs[cam_name] = cam_data["image"]
-            if "depth" in cam_data:
-                obs[f"{cam_name}_depth"] = cam_data["depth"]
+        # Get camera frames
+        images = {}
+        for name, camera in self.cameras.items():
+            images[name] = camera.async_read()
+        
+        # Get human pose if enabled and flatten it into state
+        if self._human_pose_enabled and self._human_pose_port is not None:
+            pose = self._read_human_pose()
+            # Flatten pose from (30, 3) to 90 individual values
+            flattened = pose.flatten()
+            for i in range(len(flattened)):
+                state[f"human_pose_{i}"] = float(flattened[i])
+        
+        obs = {**state, **images}
+        return obs
+    
+    def _read_human_pose(self) -> np.ndarray:
+        """Read human pose from YARP port."""
+        default_pose = np.zeros((self._num_human_pose_joints, 3), dtype=np.float32)
+        
+        try:
+            bottle = yarp.Bottle()
+            self._human_pose_port.read(bottle, False)  # Non-blocking read
+            
+            if bottle.size() == 0:
+                return default_pose
+            
+            # Check if first element is 0 (indicating no pose detected)
+            if bottle.size() == 1 and bottle.get(0).asInt32() == 0:
+                return default_pose
+            
+            # Parse pose data: [x1, y1, z1, x2, y2, z2, ...]
+            expected_size = self._num_human_pose_joints * 3
+            if bottle.size() != expected_size:
+                return default_pose
+            
+            # Extract all joint coordinates
+            pose_data = []
+            for i in range(self._num_human_pose_joints):
+                x = bottle.get(i * 3).asFloat64()
+                y = bottle.get(i * 3 + 1).asFloat64()
+                z = bottle.get(i * 3 + 2).asFloat64()
+                pose_data.append([x, y, z])
+            
+            return np.array(pose_data, dtype=np.float32)
+            
+        except Exception as e:
+            logger.debug(f"Error reading pose from YARP: {e}")
+            return default_pose
         
         # Read motor data (poses and finger positions) using new motor bus
         motor_data = self.bus.read_state()
@@ -237,7 +303,14 @@ class ErgoCub(Robot):
         A dictionary describing the structure and types of the observations produced by the robot.
         Values are either float for single values or tuples for array shapes.
         """
-        return {**self._motors_ft, **self._cameras_ft}
+        features = {**self.bus.motor_features, **self._cameras_ft}
+        
+        # Add flattened human_pose as additional state values (30 joints * 3 coords = 90 values)
+        if self._human_pose_enabled:
+            for i in range(self._num_human_pose_joints * 3):
+                features[f"human_pose_{i}"] = float
+        
+        return features
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -247,4 +320,4 @@ class ErgoCub(Robot):
         
         Returns action features in SO100-like format with dot notation.
         """
-        return self._motors_ft  # Actions and observations have the same structure
+        return self.bus.motor_features  # Actions don't include human pose

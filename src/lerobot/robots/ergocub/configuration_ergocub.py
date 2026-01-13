@@ -40,3 +40,7 @@ class ErgoCubConfig(RobotConfig):
     # Control mode: if True, actions are absolute targets (default, preserves behavior).
     # If False, actions are interpreted as deltas relative to the current/last target.
     absolute: bool = True
+    # Human pose estimation settings
+    enable_human_pose: bool = False
+    human_pose_yarp_port: str = "/hpe/pose:o"
+    num_human_pose_joints: int = 30
