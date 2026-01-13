@@ -334,24 +334,13 @@ def record_loop(
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
 
-<<<<<<< Updated upstream
-=======
-<<<<<<< Updated upstream
-=======
->>>>>>> Stashed changes
         # If there is a yarp port named /safsar/action_recognition/action:o, single_task is read from it
         if real_time_ar:
             bottle = single_task_port.read(False)
             if bottle is not None and not bottle.isNull():
                 single_task = bottle.get(0).asString()
-<<<<<<< Updated upstream
-        print("Task overridden:", single_task)
-        
-=======
             print("Task overridden:", single_task)
-        
->>>>>>> Stashed changes
->>>>>>> Stashed changes
+
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
             action_values = predict_action(
