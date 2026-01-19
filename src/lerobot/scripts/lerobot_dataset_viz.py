@@ -65,7 +65,6 @@ import argparse
 import gc
 import logging
 import time
-from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -76,19 +75,6 @@ import tqdm
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD
-
-
-class EpisodeSampler(torch.utils.data.Sampler):
-    def __init__(self, dataset: LeRobotDataset, episode_index: int):
-        from_idx = dataset.meta.episodes["dataset_from_index"][episode_index]
-        to_idx = dataset.meta.episodes["dataset_to_index"][episode_index]
-        self.frame_ids = range(from_idx, to_idx)
-
-    def __iter__(self) -> Iterator:
-        return iter(self.frame_ids)
-
-    def __len__(self) -> int:
-        return len(self.frame_ids)
 
 
 def to_hwc_uint8_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
@@ -102,7 +88,7 @@ def to_hwc_uint8_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
 
 def visualize_dataset(
     dataset: LeRobotDataset,
-    episode_indices: list[int] | None = None,
+    episode_index: int,
     batch_size: int = 32,
     num_workers: int = 0,
     mode: str = "local",
@@ -110,6 +96,7 @@ def visualize_dataset(
     ws_port: int = 9087,
     save: bool = False,
     output_dir: Path | None = None,
+    display_compressed_images: bool = False,
 ) -> Path | None:
     if save:
         assert output_dir is not None, (
@@ -118,11 +105,12 @@ def visualize_dataset(
 
     repo_id = dataset.repo_id
 
-    # If no episode indices provided, visualize all episodes
-    if episode_indices is None:
-        episode_indices = list(range(dataset.meta.total_episodes))
-
-    logging.info(f"Visualizing {len(episode_indices)} episode(s)")
+    logging.info("Loading dataloader")
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        num_workers=num_workers,
+        batch_size=batch_size,
+    )
 
     logging.info("Starting Rerun")
 
@@ -130,70 +118,55 @@ def visualize_dataset(
         raise ValueError(mode)
 
     spawn_local_viewer = mode == "local" and not save
+    rr.init(f"{repo_id}/episode_{episode_index}", spawn=spawn_local_viewer)
+
+    # Manually call python garbage collector after `rr.init` to avoid hanging in a blocking flush
+    # when iterating on a dataloader with `num_workers` > 0
+    # TODO(rcadene): remove `gc.collect` when rerun version 0.16 is out, which includes a fix
+    gc.collect()
 
     if mode == "distant":
-        # For distant mode, create one session for all episodes
-        rr.init(f"{repo_id}/episodes", spawn=spawn_local_viewer)
-        gc.collect()
         rr.serve_web_viewer(open_browser=False, web_port=web_port)
 
     logging.info("Logging to Rerun")
 
-    # Iterate over all episodes
-    for episode_index in episode_indices:
-        logging.info(f"Processing episode {episode_index}")
-        
-        # For local mode, create a separate recording for each episode
-        if mode == "local":
-            assert len(dataset.meta.episodes[episode_index]['tasks']) == 1
-            rr.init(f"{episode_index:04d}/{dataset.meta.episodes[episode_index]['tasks'][0]}", spawn=spawn_local_viewer)
-            gc.collect()
-        
-        episode_sampler = EpisodeSampler(dataset, episode_index)
-        dataloader = torch.utils.data.DataLoader(
-            dataset,
-            num_workers=num_workers,
-            batch_size=batch_size,
-            sampler=episode_sampler,
-        )
+    for batch in tqdm.tqdm(dataloader, total=len(dataloader)):
+        # iterate over the batch
+        for i in range(len(batch["index"])):
+            rr.set_time("frame_index", sequence=batch["frame_index"][i].item())
+            rr.set_time("timestamp", timestamp=batch["timestamp"][i].item())
 
-        for batch in tqdm.tqdm(dataloader, total=len(dataloader), desc=f"Episode {episode_index}"):
-            # iterate over the batch
-            for i in range(len(batch["index"])):
-                # Set time context
-                rr.set_time("frame_index", sequence=batch["frame_index"][i].item())
-                rr.set_time("timestamp", timestamp=batch["timestamp"][i].item())
+            # display each camera image
+            for key in dataset.meta.camera_keys:
+                img = to_hwc_uint8_numpy(batch[key][i])
+                img_entity = rr.Image(img).compress() if display_compressed_images else rr.Image(img)
+                rr.log(key, entity=img_entity)
 
-                # display each camera image
-                for key in dataset.meta.camera_keys:
-                    # TODO(rcadene): add `.compress()`? is it lossless?
-                    rr.log(key, rr.Image(to_hwc_uint8_numpy(batch[key][i])))
+            # display each dimension of action space (e.g. actuators command)
+            if ACTION in batch:
+                for dim_idx, val in enumerate(batch[ACTION][i]):
+                    rr.log(f"{ACTION}/{dim_idx}", rr.Scalars(val.item()))
 
-                # display each dimension of action space (e.g. actuators command)
-                if ACTION in batch:
-                    for dim_idx, val in enumerate(batch[ACTION][i]):
-                        rr.log(f"{ACTION}.{dataset.features[ACTION]['names'][dim_idx]}", rr.Scalars(val.item()))
+            # display each dimension of observed state space (e.g. agent position in joint space)
+            if OBS_STATE in batch:
+                for dim_idx, val in enumerate(batch[OBS_STATE][i]):
+                    rr.log(f"state/{dim_idx}", rr.Scalars(val.item()))
 
-                # display each dimension of observed state space (e.g. agent position in joint space)
-                if OBS_STATE in batch:
-                    for dim_idx, val in enumerate(batch[OBS_STATE][i]):
-                        rr.log(f"state.{dataset.features[OBS_STATE]['names'][dim_idx]}", rr.Scalars(val.item()))
+            if DONE in batch:
+                rr.log(DONE, rr.Scalars(batch[DONE][i].item()))
 
-                if DONE in batch:
-                    rr.log(DONE, rr.Scalars(batch[DONE][i].item()))
+            if REWARD in batch:
+                rr.log(REWARD, rr.Scalars(batch[REWARD][i].item()))
 
-                if REWARD in batch:
-                    rr.log(REWARD, rr.Scalars(batch[REWARD][i].item()))
-
-                if "next.success" in batch:
-                    rr.log("next.success", rr.Scalars(batch["next.success"][i].item()))
+            if "next.success" in batch:
+                rr.log("next.success", rr.Scalars(batch["next.success"][i].item()))
 
     if mode == "local" and save:
         # save .rrd locally
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         repo_id_str = repo_id.replace("/", "_")
-        rrd_path = output_dir / f"{repo_id_str}_all_episodes.rrd"
+        rrd_path = output_dir / f"{repo_id_str}_episode_{episode_index}.rrd"
         rr.save(rrd_path)
         return rrd_path
 
@@ -218,8 +191,8 @@ def main():
     parser.add_argument(
         "--episode-index",
         type=int,
-        default=None,
-        help="Specific episode to visualize. If not provided, all episodes will be visualized.",
+        required=True,
+        help="Episode to visualize.",
     )
     parser.add_argument(
         "--root",
@@ -290,26 +263,24 @@ def main():
         ),
     )
 
+    parser.add_argument(
+        "--display-compressed-images",
+        type=bool,
+        required=True,
+        default=False,
+        help="If set, display compressed images in Rerun instead of uncompressed ones.",
+    )
+
     args = parser.parse_args()
     kwargs = vars(args)
     repo_id = kwargs.pop("repo_id")
     root = kwargs.pop("root")
     tolerance_s = kwargs.pop("tolerance_s")
-    episode_index = kwargs.pop("episode_index")
 
     logging.info("Loading dataset")
-    
-    # Determine which episodes to visualize
-    if episode_index is not None:
-        # Single episode mode
-        dataset = LeRobotDataset(repo_id, episodes=[episode_index], root=root, tolerance_s=tolerance_s)
-        episode_indices = [episode_index]
-    else:
-        # All episodes mode - load full dataset to get total episode count
-        dataset = LeRobotDataset(repo_id, root=root, tolerance_s=tolerance_s)
-        episode_indices = list(range(dataset.meta.total_episodes))
-    
-    visualize_dataset(dataset, episode_indices=episode_indices, **kwargs)
+    dataset = LeRobotDataset(repo_id, episodes=[args.episode_index], root=root, tolerance_s=tolerance_s)
+
+    visualize_dataset(dataset, **vars(args))
 
 
 if __name__ == "__main__":

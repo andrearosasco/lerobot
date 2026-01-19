@@ -41,12 +41,16 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .koch_leader import KochLeader
 
         return KochLeader(config)
+    elif config.type == "omx_leader":
+        from .omx_leader import OmxLeader
+
+        return OmxLeader(config)
     elif config.type == "so100_leader":
-        from .so100_leader import SO100Leader
+        from .so_leader import SO100Leader
 
         return SO100Leader(config)
     elif config.type == "so101_leader":
-        from .so101_leader import SO101Leader
+        from .so_leader import SO101Leader
 
         return SO101Leader(config)
     elif config.type == "mock_teleop":
@@ -69,22 +73,16 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .homunculus import HomunculusArm
 
         return HomunculusArm(config)
-    elif config.type == "bi_so100_leader":
-        from .bi_so100_leader import BiSO100Leader
+    elif config.type == "bi_so_leader":
+        from .bi_so_leader import BiSOLeader
 
-        return BiSO100Leader(config)
-    elif config.type == "metaquest":
-        from .metaquest import MetaQuest
-
-        return MetaQuest(config)
-    elif config.type == "bimanualkeyboard":
-        from .metaquest import BimanualKeyboard
-
-        return BimanualKeyboard(config)
+        return BiSOLeader(config)
     elif config.type == "reachy2_teleoperator":
         from .reachy2_teleoperator import Reachy2Teleoperator
 
         return Reachy2Teleoperator(config)
+    elif config.type == "metaquest":
+        from .metaquest import MetaQuest
     else:
         try:
             return cast(Teleoperator, make_device_from_device_class(config))

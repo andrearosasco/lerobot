@@ -57,6 +57,7 @@ class ACTPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: ACTConfig,
+        **kwargs,
     ):
         """
         Args:
