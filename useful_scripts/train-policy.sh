@@ -56,10 +56,14 @@ CMD=(
     --image_crop_params='{"observation.images.top": [0, 80, 480, 480]}' 
 	--image_resize_size="[256,256]"
     --dataset.image_transforms.enable=true
-    --dataset.image_transforms.tfs.greenscreen.weight=-1.0  # always apply greenscreen
     --dataset.image_transforms.max_num_transforms=3
-    --dataset.image_transforms.tfs.affine.weight=0
     --dataset.image_transforms.random_order=true
+    --dataset.image_transforms.tfs='''{"brightness": {"weight": 1.0, "type": "ColorJitter", "kwargs": {"brightness": [0.8, 1.2]}}, 
+                                       "contrast": {"weight": 1.0, "type": "ColorJitter", "kwargs": {"contrast": [0.8, 1.2]}}, 
+                                       "saturation": {"weight": 1.0, "type": "ColorJitter", "kwargs": {"saturation": [0.5, 1.5]}}, 
+                                       "hue": {"weight": 1.0, "type": "ColorJitter", "kwargs": {"hue": [-0.05, 0.05]}}, 
+                                       "sharpness": {"weight": 1.0, "type": "SharpnessJitter", "kwargs": {"sharpness": [0.5, 1.5]}}, 
+                                       "green_screen_replace": {"weight": -1.0, "type": "GreenScreenReplace", "kwargs": {"pool_dir": "./gs_image_pool", "green_ratio": 1.25, "min_green": 0.25, "spill": 0.10}}}'''
 )
 
 # Add policy-specific parameters
