@@ -76,6 +76,11 @@ class TrainPipelineConfig(HubMixin):
 
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
+    
+    # Universal image preprocessing (applied to ALL policies during training and inference)
+    image_resize_size: tuple[int, int] | None = None  # Final output size (height, width)
+    image_crop_params: dict[str, tuple[int, int, int, int]] | None = None  # Per-camera crop (top, left, height, width)
+    
     checkpoint_path: Path | None = field(init=False, default=None)
 
     def validate(self) -> None:
