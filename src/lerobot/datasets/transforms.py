@@ -358,10 +358,14 @@ class ImageTransforms(Transform):
         super().__init__()
         self._cfg = cfg
 
+        self.always_apply = []  # Transforms with weight=-1
         self.weights = []
         self.transforms = {}
         for tf_name, tf_cfg in cfg.tfs.items():
-            if tf_cfg.weight <= 0.0:
+            if tf_cfg.weight == 0.0:
+                continue
+            if tf_cfg.weight == -1.0:
+                self.always_apply.append(make_transform_from_config(tf_cfg))
                 continue
 
             self.transforms[tf_name] = make_transform_from_config(tf_cfg)
@@ -379,4 +383,9 @@ class ImageTransforms(Transform):
             )
 
     def forward(self, *inputs: Any) -> Any:
+        # Apply always-active transforms first
+        for transform in self.always_apply:
+            outputs = transform(*inputs)
+            inputs = outputs if len(inputs) > 1 else (outputs,)
+        # Then apply random subset
         return self.tf(*inputs)

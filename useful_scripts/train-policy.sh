@@ -53,8 +53,12 @@ CMD=(
     --dataset.repo_id="$DATASET"
     --policy.device="$DEVICE"
     --output_dir="checkpoints/$OUTPUT"
+    --image_crop_params='{"observation.images.top": [0, 80, 480, 480]}' 
+	--image_resize_size="[256,256]"
     --dataset.image_transforms.enable=true
+    --dataset.image_transforms.tfs.greenscreen.weight=-1.0  # always apply greenscreen
     --dataset.image_transforms.max_num_transforms=3
+    --dataset.image_transforms.tfs.affine.weight=0
     --dataset.image_transforms.random_order=true
 )
 
@@ -98,7 +102,6 @@ case $POLICY in
             --batch_size=8
             --num_workers=4
             --policy.crop_shape=null
-            --policy.resize_shape='[240,320]'
             --policy.noise_scheduler_type=DDIM
             --policy.num_train_timesteps=100
         )
