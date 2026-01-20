@@ -143,6 +143,122 @@ class SharpnessJitter(Transform):
         sharpness_factor = params["sharpness_factor"]
         return self._call_kernel(F.adjust_sharpness, inpt, sharpness_factor=sharpness_factor)
 
+import os
+from pathlib import Path
+from typing import Any
+
+import torch
+from torchvision.io import read_image
+from torchvision.transforms import v2
+from torchvision.transforms.v2 import Transform, functional as F
+
+
+class GreenScreenReplace(Transform):
+    """Replace green pixels with a random background sampled from a directory.
+
+    Expected input: torch.Tensor with shape [..., 3, H, W] (uint8 or float).
+    Backgrounds are read from `pool_dir` and resized to match HxW.
+
+    Args:
+        pool_dir: path to a directory containing background images.
+        green_ratio: how much stronger G must be relative to max(R,B) to be considered "green".
+            Rule: G > green_ratio * max(R,B)
+        min_green: minimum G value (in [0,1] after conversion) to be considered for keying.
+        spill: additional margin: (G - max(R,B)) > spill (in [0,1])
+        extensions: allowed image extensions.
+    """
+
+    def __init__(
+        self,
+        pool_dir: str | os.PathLike,
+        green_ratio: float = 1.25,
+        min_green: float = 0.25,
+        spill: float = 0.10,
+        extensions: tuple[str, ...] = (".jpg", ".jpeg", ".png", ".webp"),
+    ) -> None:
+        super().__init__()
+        self.pool_dir = Path(pool_dir)
+        self.green_ratio = float(green_ratio)
+        self.min_green = float(min_green)
+        self.spill = float(spill)
+        self.extensions = tuple(ext.lower() for ext in extensions)
+
+        if not self.pool_dir.exists() or not self.pool_dir.is_dir():
+            raise ValueError(f"{self.pool_dir=} must exist and be a directory.")
+
+        self._bg_paths = self._list_backgrounds(self.pool_dir)
+        if len(self._bg_paths) == 0:
+            raise ValueError(f"No background images found under {self.pool_dir} with {self.extensions=}.")
+
+    def _list_backgrounds(self, pool_dir: Path) -> list[Path]:
+        files: list[Path] = []
+        for p in pool_dir.rglob("*"):
+            if p.is_file() and p.suffix.lower() in self.extensions:
+                files.append(p)
+        files.sort()
+        return files
+
+    def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
+        # Pick a random background index each call.
+        idx = int(torch.randint(low=0, high=len(self._bg_paths), size=(1,)).item())
+        return {"bg_index": idx}
+
+    def _load_background(self, path: Path) -> torch.Tensor:
+        # read_image returns uint8 tensor [C, H, W] in RGB.
+        bg = read_image(str(path))  # uint8, CPU
+        if bg.ndim != 3 or bg.shape[0] not in (1, 3):
+            raise ValueError(f"Background image {path} has unsupported shape {tuple(bg.shape)}.")
+
+        # Force 3 channels.
+        if bg.shape[0] == 1:
+            bg = bg.repeat(3, 1, 1)
+        return bg
+
+    def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
+        # We only support Tensor inputs here (matches your pipeline expectations).
+        if not isinstance(inpt, torch.Tensor):
+            raise TypeError(f"GreenScreenReplace expects torch.Tensor input, got {type(inpt)}")
+
+        # Expect [..., 3, H, W]
+        if inpt.ndim < 3:
+            raise ValueError(f"Input must have at least 3 dims, got {inpt.ndim=}.")
+        if inpt.shape[-3] != 3:
+            raise ValueError(f"Expected 3 channels at dim -3, got {inpt.shape[-3]=}.")
+
+        # Get spatial size
+        _, h, w = inpt.shape[-3], inpt.shape[-2], inpt.shape[-1]
+
+        # Load & resize background
+        bg_path = self._bg_paths[params["bg_index"]]
+        bg = self._load_background(bg_path)  # [3, Hb, Wb], uint8 on CPU
+        bg = F.resize(bg, size=[h, w], antialias=True)
+
+        # Match dtype/range for blending by going to float in [0,1]
+        orig_dtype = inpt.dtype
+        inpt_f = F.convert_image_dtype(inpt, dtype=torch.float32)
+        bg_f = F.convert_image_dtype(bg, dtype=torch.float32)
+
+        # Move bg to input device and expand to match leading dims of inpt
+        bg_f = bg_f.to(device=inpt_f.device)
+        # Expand to [..., 3, H, W]
+        for _ in range(inpt_f.ndim - 3):
+            bg_f = bg_f.unsqueeze(0)
+        bg_f = bg_f.expand(*inpt_f.shape[:-3], 3, h, w)
+
+        r = inpt_f[..., 0, :, :]
+        g = inpt_f[..., 1, :, :]
+        b = inpt_f[..., 2, :, :]
+
+        max_rb = torch.maximum(r, b)
+
+        # Chroma key mask: "green enough"
+        green_mask = (g > (self.green_ratio * max_rb)) & (g > self.min_green) & ((g - max_rb) > self.spill)
+        green_mask = green_mask.unsqueeze(-3).to(dtype=inpt_f.dtype)  # [..., 1, H, W] float 0/1
+
+        out_f = inpt_f * (1.0 - green_mask) + bg_f * green_mask
+        out = F.convert_image_dtype(out_f, dtype=orig_dtype)
+        return out
+
 
 @dataclass
 class ImageTransformConfig:
@@ -224,6 +340,8 @@ def make_transform_from_config(cfg: ImageTransformConfig):
         return SharpnessJitter(**cfg.kwargs)
     elif cfg.type == "RandomAffine":
         return v2.RandomAffine(**cfg.kwargs)
+    elif cfg.type == "GreenScreenReplace":
+        return GreenScreenReplace(**cfg.kwargs)
     else:
         raise ValueError(f"Transform '{cfg.type}' is not valid.")
 
