@@ -327,6 +327,11 @@ class ImageTransformsConfig:
                 type="RandomAffine",
                 kwargs={"degrees": (-5.0, 5.0), "translate": (0.05, 0.05)},
             ),
+            "green_screen_replace": ImageTransformConfig(
+                weight=1.0,
+                type="GreenScreenReplace",
+                kwargs={"pool_dir": "./gs_image_pool", "green_ratio": 1.25, "min_green": 0.25, "spill": 0.10,},
+            ),
         }
     )
 
