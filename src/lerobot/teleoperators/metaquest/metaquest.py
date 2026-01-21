@@ -174,24 +174,17 @@ class MetaQuest(Teleoperator):
         if not self.tf_reader:
             raise DeviceNotConnectedError("FrameTransform reader not available")
         
-        # Use a try-except block to handle potential YARP errors gracefully
-        try:
-            success = self.tf_reader.getTransform(target_frame, reference_frame, self.matrix_buffer)
-            if not success:
-                print(f"Warning: Failed to get transform from {target_frame} to {reference_frame}")
-                return np.eye(4)  # Return identity matrix as fallback
-                
-            # Convert YARP matrix to numpy array
-            transform = np.zeros((4, 4))
-            for i in range(4):
-                for j in range(4):
-                    transform[i, j] = self.matrix_buffer.get(i, j)
+        while not self.tf_reader.getTransform(target_frame, reference_frame, self.matrix_buffer):
+            time.sleep(0.01)  # Wait a bit before retrying
             
-            return transform
+        # Convert YARP matrix to numpy array
+        transform = np.zeros((4, 4))
+        for i in range(4):
+            for j in range(4):
+                transform[i, j] = self.matrix_buffer.get(i, j)
+        
+        return transform
             
-        except Exception as e:
-            print(f"Error getting transform from {target_frame} to {reference_frame}: {e}")
-            return np.eye(4)  # Return identity matrix as fallback
 
     def _get_head_pose(self) -> dict:
         """Get raw head pose from MetaQuest."""

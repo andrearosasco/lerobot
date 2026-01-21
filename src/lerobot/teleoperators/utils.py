@@ -83,6 +83,8 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         return Reachy2Teleoperator(config)
     elif config.type == "metaquest":
         from .metaquest import MetaQuest
+
+        return MetaQuest(config)
     else:
         try:
             return cast(Teleoperator, make_device_from_device_class(config))
