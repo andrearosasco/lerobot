@@ -34,6 +34,7 @@ from lerobot.envs.factory import make_env, make_env_pre_post_processors
 from lerobot.envs.utils import close_envs
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy, make_pre_post_processors
+from lerobot.processor import ImageCropResizeProcessorStep
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.scripts.lerobot_eval import eval_policy_all
@@ -225,9 +226,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
     eval_env = None
-    if cfg.eval_freq > 0 and cfg.env is not None:
-        if is_main_process:
-            logging.info("Creating env")
+    if cfg.eval_freq > 0 and cfg.env is not None and is_main_process:
+        logging.info("Creating env")
         eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
     if is_main_process:
@@ -284,6 +284,16 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         **processor_kwargs,
         **postprocessor_kwargs,
     )
+
+    # Add universal image preprocessing
+    image_processor = ImageCropResizeProcessorStep(
+        crop_params_dict=cfg.image_crop_params,
+        resize_size=cfg.image_resize_size,
+    )
+    # Insert at the beginning of the preprocessor pipeline (before normalization)
+    preprocessor.steps.insert(0, image_processor)
+    if is_main_process:
+        logging.info(f"Added image preprocessing: resize={cfg.image_resize_size}, crop={cfg.image_crop_params}")
 
     if is_main_process:
         logging.info("Creating optimizer and scheduler")
