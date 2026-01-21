@@ -1,7 +1,29 @@
 {
   "version": "0.2.0",
   "configurations": [
-
+    {
+      "name": "Python Debugger: Remote Attach",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": {
+        "host": "localhost",
+        "port": 5678
+      },
+      "pathMappings": [
+        {
+          "localRoot": "${workspaceFolder}",
+          "remoteRoot": "."
+        }
+      ]
+    },
+    {
+      "name": "Python Debugger: Current File with Arguments",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "args": "${command:pickArgs}"
+    },
     {
       "name": "Split dataset",
       "type": "debugpy",
@@ -12,7 +34,7 @@
       "cwd": "/home/sberti/metaCub"
     },
     {
-      "name": "Test",
+      "name": "Test (Real)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_record.py",
@@ -33,6 +55,32 @@
         "--dataset.single_task=get the ball",
         "--dataset.reset_time=0",
         "--dataset.episode_time=10",
+        "--dataset.fps=10"
+      ]
+    },
+    {
+      "name": "Test (Sim)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_record.py",
+      "console": "integratedTerminal",
+      "python": "/home/sberti/.local/share/mamba/envs/lerobot/bin/python",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      },
+      "preLaunchTask": "clear-test",
+      "args": [
+        "--robot.type=ergocub",
+        "--robot.remote_prefix=/ergocubSim",
+        "--robot.local_prefix=/lerobot",
+        "--robot.cameras={egocentric:{\"type\": \"yarp\", \"yarp_name\": \"ergocubSim/depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
+        "--robot.control_boards=[head,left_hand,right_hand,fingers,torso]",
+        "--dataset.repo_id=HSP-IIT/eval_test",
+        "--dataset.fps=10",
+        "--policy.path=steb6/act_redball_sim_reactive",
+        "--dataset.single_task=get the ball",
+        "--dataset.reset_time=0",
+        "--dataset.episode_time=300",
         "--dataset.fps=10"
       ]
     },
