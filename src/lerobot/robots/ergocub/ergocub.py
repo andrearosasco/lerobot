@@ -70,7 +70,9 @@ class ErgoCub(Robot):
             remote_prefix=config.remote_prefix,
             local_prefix=f"{config.local_prefix}/{self.session_id}",
             control_boards=config.control_boards
-            
+            state_boards=config.state_boards
+            left_hand=config.left_hand,
+            right_hand=config.right_hand,
         )
 
     def connect(self, calibrate: bool = True):

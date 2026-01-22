@@ -38,6 +38,9 @@ class ErgoCubMotorsBus:
         remote_prefix: str,
         local_prefix: str,
         control_boards: list[str],
+        state_boards: list[str],
+        left_hand: bool = True,
+        right_hand: bool = True,
     ):
         """
         Initialize ErgoCub YARP motors bus.
@@ -45,23 +48,27 @@ class ErgoCubMotorsBus:
         Args:
             remote_prefix: Remote YARP prefix (e.g., "/ergocubSim")
             local_prefix: Local YARP prefix (e.g., "/lerobot/session_id")
-            control_boards: List of control boards to manage (e.g., ["left_hand", "right_hand", "head", "fingers"])
+            control_boards: List of control boards to send commands to
+            state_boards: List of state boards to read from
         """
         self.remote_prefix = remote_prefix
         self.local_prefix = local_prefix
+        self.state_boards = state_boards
+        self.control_boards = control_boards
         
         # Initialize controllers
+        parts_needed = set(control_boards) | set(state_boards)
         self.controllers = {}
         
         self.controllers["bimanual"] = ErgoCubBimanualController(
-            remote_prefix, local_prefix, 'left_hand' in control_boards, 'right_hand' in control_boards
+            remote_prefix, local_prefix, left_hand, right_hand
         )
             
-        if 'head' in control_boards:
+        if 'head' in parts_needed:
             self.controllers["head"] = ErgoCubHeadController(remote_prefix, local_prefix)
         
         # Optionally add finger controller
-        if 'fingers' in control_boards:
+        if 'fingers' in parts_needed:
             self.controllers["fingers"] = ErgoCubFingerController(local_prefix)
 
     @property
@@ -98,8 +105,8 @@ class ErgoCubMotorsBus:
             raise DeviceNotConnectedError("ErgoCubMotorsBus not connected")
         
         state = {}
-        for controller in self.controllers.values():
-            controller_state = controller.read_current_state()
+        for board in self.state_boards:
+            controller_state = self.controllers[board].read_current_state()
             state.update(controller_state)
         
         return state
@@ -109,8 +116,8 @@ class ErgoCubMotorsBus:
         if not self.is_connected:
             raise DeviceNotConnectedError("ErgoCubMotorsBus not connected")
         
-        for controller in self.controllers.values():
-            controller.send_commands(commands)
+        for board in self.control_boards:
+            self.controllers[board].send_commands(commands)
 
     @property
     def motor_features(self) -> dict[str, type]:
