@@ -142,7 +142,6 @@ class ErgoCubRobotClientConfig(RobotClientConfig):
             remote_prefix="/ergocubSim",
             local_prefix="/gr00t_client",
             cameras={"agentview": YarpCameraConfig(yarp_name="ergocubSim/depthCamera/rgbImage:o", width=640, height=480, fps=30)},
-            use_bimanual_controller=True,
         )
     )
 
