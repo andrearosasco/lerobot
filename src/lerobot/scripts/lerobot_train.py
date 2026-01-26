@@ -411,27 +411,6 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
-        # Debug: Save sample images from first batch
-        if step == 0 and is_main_process:
-            import torchvision
-            from pathlib import Path
-            debug_dir = Path(cfg.output_dir) / "debug_images"
-            debug_dir.mkdir(exist_ok=True, parents=True)
-            for key in batch:
-                if "image" in key and isinstance(batch[key], torch.Tensor):
-                    imgs = batch[key][:4].cpu()  # First 4 samples
-                    # Check if images are normalized and denormalize
-                    if imgs.min() < 0 or imgs.max() > 1.5:
-                        # Denormalize from standardization (mean, std)
-                        if key in dataset.meta.stats and "mean" in dataset.meta.stats[key]:
-                            mean = dataset.meta.stats[key]["mean"].view(1, -1, 1, 1)
-                            std = dataset.meta.stats[key]["std"].view(1, -1, 1, 1)
-                            imgs = imgs * std + mean
-                        imgs = imgs.clamp(0, 1)
-                    for i, img in enumerate(imgs):
-                        save_path = debug_dir / f"step{step}_{key.replace('.', '_')}_sample{i}.png"
-                        torchvision.utils.save_image(img, save_path)
-            logging.info(f"Saved debug images to {debug_dir}")
 
         train_tracker, output_dict = update_policy(
             train_tracker,

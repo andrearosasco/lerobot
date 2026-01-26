@@ -259,125 +259,6 @@ class GreenScreenReplace(Transform):
         out = F.convert_image_dtype(out_f, dtype=orig_dtype)
         return out
 
-import re
-import torch
-from torchvision.transforms.v2 import Transform
-
-
-class MultiColorScreenRemoval(Transform):
-    """
-    Remove (key out) pixels close to any of the provided hex colors.
-
-    Supports torch tensors shaped [..., C, H, W] where C is 3 (RGB) or 4 (RGBA).
-    - If C == 4: sets alpha to 0 for matched pixels (and zeros RGB as well).
-    - If C == 3: zeros RGB for matched pixels.
-
-    Args:
-        colors: list of hex colors like ["#00FF00", "#00FE10"] (case-insensitive, '#' optional).
-        tolerance: color distance threshold in RGB space.
-            If input is float in [0,1], typical values: 0.05 - 0.25
-            If input is uint8 in [0,255], typical values: 10 - 60
-        squared_distance: if True, compare squared distance to tolerance**2 (saves a sqrt).
-    """
-
-    def __init__(
-        self,
-        colors: list[str],
-        tolerance: float = 0.15,
-        squared_distance: bool = True,
-    ) -> None:
-        super().__init__()
-        if not isinstance(colors, (list, tuple)) or len(colors) == 0:
-            raise ValueError("colors must be a non-empty list of hex strings like ['#00FF00'].")
-
-        self.colors = [self._hex_to_rgb(c) for c in colors]
-        self.tolerance = float(tolerance)
-        self.squared_distance = bool(squared_distance)
-
-    @staticmethod
-    def _hex_to_rgb(hex_str: str) -> tuple[int, int, int]:
-        s = hex_str.strip().lstrip("#")
-        if not re.fullmatch(r"[0-9a-fA-F]{6}", s):
-            raise ValueError(f"Invalid hex color: {hex_str!r} (expected '#RRGGBB').")
-        r = int(s[0:2], 16)
-        g = int(s[2:4], 16)
-        b = int(s[4:6], 16)
-        return r, g, b
-
-    def make_params(self, flat_inputs: list[object]) -> dict[str, object]:
-        # No random params: deterministic given colors/tolerance
-        return {}
-
-    def transform(self, inpt: object, params: dict[str, object]) -> object:
-        if not isinstance(inpt, torch.Tensor):
-            raise TypeError(
-                "MultiColorScreenRemoval currently supports torch.Tensor inputs only "
-                "(expected shape [..., C, H, W])."
-            )
-
-        x = inpt
-        if x.ndim < 3:
-            raise ValueError(f"Expected input with shape [..., C, H, W], got {tuple(x.shape)}.")
-
-        c = x.shape[-3]
-        if c not in (3, 4):
-            raise ValueError(f"Expected 3 or 4 channels, got C={c}.")
-
-        # Split RGB / A
-        rgb = x[..., :3, :, :]
-
-        # Work in float for distance, but preserve original dtype at the end
-        orig_dtype = rgb.dtype
-        rgb_f = rgb.to(torch.float32)
-
-        # Detect scale: [0,1] floats vs [0,255] ints/floats
-        # (If you *know* your scale, you can remove this and hardcode.)
-        max_val = float(rgb_f.max().item()) if rgb_f.numel() > 0 else 1.0
-        scale = 255.0 if max_val > 1.5 else 1.0  # heuristic
-
-        # Build an "any color matches" mask
-        # mask shape: [..., H, W]
-        mask_any = None
-        tol = self.tolerance
-        if self.squared_distance:
-            tol_cmp = tol * tol
-        else:
-            tol_cmp = tol
-
-        for (r, g, b) in self.colors:
-            key = torch.tensor([r, g, b], device=rgb_f.device, dtype=torch.float32) / (255.0 / scale)
-            # key shape [3] -> broadcast to [..., 3, H, W]
-            diff = rgb_f - key.view(*([1] * (rgb_f.ndim - 3)), 3, 1, 1)
-
-            dist2 = (diff * diff).sum(dim=-3)  # sum over channel -> [..., H, W]
-            if self.squared_distance:
-                mask = dist2 <= tol_cmp
-            else:
-                mask = torch.sqrt(dist2) <= tol_cmp
-
-            mask_any = mask if mask_any is None else (mask_any | mask)
-
-        if mask_any is None:
-            return inpt
-
-        # Apply: zero RGB where matched
-        out = x.clone()
-        out[..., :3, :, :] = torch.where(
-            mask_any.unsqueeze(-3),
-            torch.zeros((), device=out.device, dtype=out.dtype),
-            out[..., :3, :, :],
-        )
-
-        # If RGBA, also zero alpha where matched
-        if c == 4:
-            out[..., 3:4, :, :] = torch.where(
-                mask_any.unsqueeze(-3),
-                torch.zeros((), device=out.device, dtype=out.dtype),
-                out[..., 3:4, :, :],
-            )
-
-        return out
-
 
 @dataclass
 class ImageTransformConfig:
@@ -461,8 +342,6 @@ def make_transform_from_config(cfg: ImageTransformConfig):
         return v2.RandomAffine(**cfg.kwargs)
     elif cfg.type == "GreenScreenReplace":
         return GreenScreenReplace(**cfg.kwargs)
-    elif cfg.type == "MultiColorScreenRemoval":
-        return MultiColorScreenRemoval(**cfg.kwargs)
     else:
         raise ValueError(f"Transform '{cfg.type}' is not valid.")
 

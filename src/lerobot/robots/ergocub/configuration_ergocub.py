@@ -33,10 +33,13 @@ class ErgoCubConfig(RobotConfig):
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
     # Enable/disable specific body parts
     control_boards: List[str] = field(
-        default_factory=lambda: ["head", "left_arm", "right_arm", "neck", "fingers"]
+        default_factory=lambda: ["head", "bimanual", "neck", "fingers"]
     )
-    # Whether to use bimanual controller instead of separate arm controllers
-    use_bimanual_controller: bool = True
+    state_boards: List[str] = field(
+        default_factory=lambda: ["head", "bimanual", "neck", "fingers"]
+    )
+    left_hand: bool = True
+    right_hand: bool = True
     # Control mode: if True, actions are absolute targets (default, preserves behavior).
     # If False, actions are interpreted as deltas relative to the current/last target.
     absolute: bool = True

@@ -40,8 +40,8 @@ else
 fi
 
 # Set output and repo ID
-OUTPUT="${POLICY}_${DATASET_NAME}"
-REPO_ID="${DATASET_OWNER}/${POLICY}-${DATASET_NAME}"
+OUTPUT="${POLICY}_${DATASET_NAME}_fixcrop"
+REPO_ID="${DATASET_OWNER}/${POLICY}-${DATASET_NAME}_fixcrop"
 
 # Base command
 CMD=(
@@ -53,7 +53,7 @@ CMD=(
     --dataset.repo_id="$DATASET"
     --policy.device="$DEVICE"
     --output_dir="checkpoints/$OUTPUT"
-    --image_crop_params='{"observation.images.top": [0, 80, 480, 480]}' 
+    --image_crop_params='{"observation.images.external": [0, 80, 480, 480]}' 
 	--image_resize_size="[256,256]"
     --dataset.image_transforms.enable=true
     --dataset.image_transforms.max_num_transforms=3
