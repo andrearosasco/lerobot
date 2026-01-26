@@ -412,6 +412,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
 
+        if step == 0 and is_main_process:
+            # Log a few training images after preprocessing
+            from lerobot.utils.utils import debug_training_images
+            debug_training_images(cfg, dataset, batch, step)
+
+
         train_tracker, output_dict = update_policy(
             train_tracker,
             policy,

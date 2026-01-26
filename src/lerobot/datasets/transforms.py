@@ -175,6 +175,10 @@ class GreenScreenReplace(Transform):
         min_green: float = 0.25,
         spill: float = 0.10,
         extensions: tuple[str, ...] = (".jpg", ".jpeg", ".png", ".webp"),
+        hue_min: float = 0.20,
+        hue_max: float = 0.45,
+        min_s: float = 0.2,
+        min_v: float = 0.2,
     ) -> None:
         super().__init__()
         self.pool_dir = Path(pool_dir)
@@ -182,6 +186,10 @@ class GreenScreenReplace(Transform):
         self.min_green = float(min_green)
         self.spill = float(spill)
         self.extensions = tuple(ext.lower() for ext in extensions)
+        self.hue_min = float(hue_min)
+        self.hue_max = float(hue_max)
+        self.min_s = float(min_s)
+        self.min_v = float(min_v)
 
         if not self.pool_dir.exists() or not self.pool_dir.is_dir():
             raise ValueError(f"{self.pool_dir=} must exist and be a directory.")
@@ -245,17 +253,40 @@ class GreenScreenReplace(Transform):
             bg_f = bg_f.unsqueeze(0)
         bg_f = bg_f.expand(*inpt_f.shape[:-3], 3, h, w)
 
-        r = inpt_f[..., 0, :, :]
-        g = inpt_f[..., 1, :, :]
-        b = inpt_f[..., 2, :, :]
+        # Convert RGB to HSV for green detection
+        # inpt_f: [..., 3, H, W] in [0,1]
+        rgb = inpt_f.permute(*range(inpt_f.ndim - 3), -2, -1, -3)  # [..., H, W, 3]
+        rgb = rgb.clamp(0, 1)
+        maxc, _ = rgb.max(-1)
+        minc, _ = rgb.min(-1)
+        v = maxc
+        s = torch.where(maxc == 0, torch.zeros_like(maxc), (maxc - minc) / maxc)
+        rc, gc, bc = rgb.unbind(-1)
+        # Hue calculation
+        h = torch.zeros_like(maxc)
+        mask = (maxc == rc)
+        h[mask] = ((gc - bc)[mask] / (maxc - minc)[mask]) % 6
+        mask = (maxc == gc)
+        h[mask] = ((bc - rc)[mask] / (maxc - minc)[mask]) + 2
+        mask = (maxc == bc)
+        h[mask] = ((rc - gc)[mask] / (maxc - minc)[mask]) + 4
+        h = h / 6.0
+        h = h % 1.0
+        # Use configurable HSV thresholds for green
+        green_mask = (
+            (h >= self.hue_min) & (h <= self.hue_max) &
+            (s >= self.min_s) & (v >= self.min_v)
+        )
+        # Restore mask shape to [..., 1, H, W]
+        green_mask = green_mask.permute(*range(green_mask.ndim - 2), -2, -1).unsqueeze(-3).to(dtype=inpt_f.dtype)
 
-        max_rb = torch.maximum(r, b)
+        # Morphological dilation to expand the mask by 1 pixel (kernel size 3x3)
+        import torch.nn.functional as Fnn
+        kernel = torch.ones((1, 1, 3, 3), dtype=green_mask.dtype, device=green_mask.device)
+        pad = (1, 1, 1, 1)
+        green_mask_dilated = Fnn.max_pool2d(green_mask, kernel_size=3, stride=1, padding=1)
 
-        # Chroma key mask: "green enough"
-        green_mask = (g > (self.green_ratio * max_rb)) & (g > self.min_green) & ((g - max_rb) > self.spill)
-        green_mask = green_mask.unsqueeze(-3).to(dtype=inpt_f.dtype)  # [..., 1, H, W] float 0/1
-
-        out_f = inpt_f * (1.0 - green_mask) + bg_f * green_mask
+        out_f = inpt_f * (1.0 - green_mask_dilated) + bg_f * green_mask_dilated
         out = F.convert_image_dtype(out_f, dtype=orig_dtype)
         return out
 

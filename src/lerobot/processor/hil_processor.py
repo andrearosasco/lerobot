@@ -202,6 +202,9 @@ class ImageCropResizeProcessorStep(ObservationProcessorStep):
 
         new_observation = dict(observation)
 
+        if not set(self.crop_params_dict.keys()).issubset(set(observation.keys())):
+            raise ValueError("Crop parameters contain keys not present in the observation dictionary.")
+
         # Process all image keys in the observation
         for key in observation:
             if "image" not in key:

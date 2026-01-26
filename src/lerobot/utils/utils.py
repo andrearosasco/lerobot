@@ -31,6 +31,28 @@ from accelerate import Accelerator
 from datasets.utils.logging import disable_progress_bar, enable_progress_bar
 
 
+def debug_training_images(cfg, dataset, batch, step):
+    import torchvision
+    from pathlib import Path
+    debug_dir = Path(cfg.output_dir) / "debug_images"
+    debug_dir.mkdir(exist_ok=True, parents=True)
+    for key in batch:
+        if "image" in key and isinstance(batch[key], torch.Tensor):
+            imgs = batch[key][:4].cpu()  # First 4 samples
+            # Check if images are normalized and denormalize
+            if imgs.min() < 0 or imgs.max() > 1.5:
+                # Denormalize from standardization (mean, std)
+                if key in dataset.meta.stats and "mean" in dataset.meta.stats[key]:
+                    mean = dataset.meta.stats[key]["mean"].view(1, -1, 1, 1)
+                    std = dataset.meta.stats[key]["std"].view(1, -1, 1, 1)
+                    imgs = imgs * std + mean
+                imgs = imgs.clamp(0, 1)
+            for i, img in enumerate(imgs):
+                save_path = debug_dir / f"step{step}_{key.replace('.', '_')}_sample{i}.png"
+                torchvision.utils.save_image(img, save_path)
+    logging.info(f"Saved debug images to {debug_dir}")
+
+
 def inside_slurm():
     """Check whether the python process was launched through slurm"""
     # TODO(rcadene): return False for interactive mode `--pty bash`
