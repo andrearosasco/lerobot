@@ -173,7 +173,6 @@ class ErgoCubBimanualController:
             all_encoders = [hand_bottle.get(i).asFloat64() for i in range(hand_bottle.size())]
             # First 7 are hand joints, last 6 are finger joints
             hand_encoders = all_encoders[:7] if len(all_encoders) >= 7 else [0.0] * 7
-            finger_encoders = all_encoders[7:13] if len(all_encoders) >= 13 else [0.0] * 6
             
             # Combine torso + hand encoders
             joint_positions = np.array(torso_encoders + hand_encoders)
@@ -196,11 +195,6 @@ class ErgoCubBimanualController:
                     f"{side}_hand.orientation.d5": rotation_6d[4].item(),
                     f"{side}_hand.orientation.d6": rotation_6d[5].item(),
                 })
-                
-                # Add actual finger values from encoders
-                finger_joint_names = ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]
-                for i, joint in enumerate(finger_joint_names):
-                    state[f"{side}_fingers.{joint}"] = finger_encoders[i] if i < len(finger_encoders) else 0.0
         
         return state
     

@@ -32,17 +32,20 @@ class ErgoCubFingerController:
     Sends 12 floats (6 for left hand, 6 for right hand) to /ergocub_finger_controller/finger_commands:i
     """
     
-    def __init__(self, local_prefix: str):
+    def __init__(self, remote_prefix: str, local_prefix: str):
         """
         Initialize finger controller.
         
         Args:
             local_prefix: Local YARP prefix (e.g., "/lerobot/session_id")
         """
+        self.remote_prefix = remote_prefix
         self.local_prefix = local_prefix
         
         # YARP port for finger commands
         self.finger_cmd_port = yarp.Port()
+        self.left_encoders_port = yarp.BufferedPortBottle()
+        self.right_encoders_port = yarp.BufferedPortBottle()
         
         self._is_connected = False
         
@@ -73,6 +76,25 @@ class ErgoCubFingerController:
         while not yarp.Network.connect(finger_cmd_local, finger_cmd_remote):
             logger.warning(f"Failed to connect {finger_cmd_local} -> {finger_cmd_remote}, retrying...")
             time.sleep(1)
+
+        # Open encoders ports for both hands
+        left_encoders_local = f"{self.local_prefix}/finger/left_encoders:i"
+        if not self.left_encoders_port.open(left_encoders_local):
+            raise ConnectionError(f"Failed to open left encoders port {left_encoders_local}")
+        
+        left_encoders_remote = f"{self.remote_prefix}/left_arm/state:o"
+        while not yarp.Network.connect(left_encoders_remote, left_encoders_local):
+            logger.warning(f"Failed to connect {left_encoders_remote} -> {left_encoders_local}, retrying...")
+            time.sleep(1)
+
+        right_encoders_local = f"{self.local_prefix}/finger/right_encoders:i"
+        if not self.right_encoders_port.open(right_encoders_local):
+            raise ConnectionError(f"Failed to open right encoders port {right_encoders_local}")
+        
+        right_encoders_remote = f"{self.remote_prefix}/right_arm/state:o"
+        while not yarp.Network.connect(right_encoders_remote, right_encoders_local):
+            logger.warning(f"Failed to connect {right_encoders_remote} -> {right_encoders_local}, retrying...")
+            time.sleep(1)
         
         self._is_connected = True
         logger.info("ErgoCubFingerController connected")
@@ -92,7 +114,28 @@ class ErgoCubFingerController:
         if not self.is_connected:
             raise DeviceNotConnectedError("ErgoCubFingerController not connected")
         
-        return {}
+        state = {}
+        # Add actual finger values from encoders
+        finger_joint_names = ["thumb_add", "thumb_oc", "index_add", "index_oc", "middle_oc", "ring_pinky_oc"]
+        for side in ["left", "right"]:
+
+            # Read hand encoders with busy wait
+            encoders_port = self.left_encoders_port if side == "left" else self.right_encoders_port
+            read_attempts = 0
+            while (hand_bottle := encoders_port.read(False)) is None:
+                read_attempts += 1
+                if read_attempts % 1000 == 0:  # Warning every 1000 attempts
+                    logger.warning(f"Still waiting for {side} hand encoder data (attempt {read_attempts})")
+                time.sleep(0.001)  # 1 millisecond sleep
+            
+            # Read all available encoders (hand + fingers)
+            all_encoders = [hand_bottle.get(i).asFloat64() for i in range(hand_bottle.size())]
+
+            finger_encoders = all_encoders[7:13] if len(all_encoders) >= 13 else [0.0] * 6
+            for i, joint in enumerate(finger_joint_names):
+                state[f"{side}_fingers.{joint}"] = finger_encoders[i] if i < len(finger_encoders) else 0.0
+            
+        return state
     
     def reset(self) -> None:
         """Reset finger controller (no-op)."""

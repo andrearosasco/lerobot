@@ -69,8 +69,8 @@ class ErgoCub(Robot):
         self.bus = ErgoCubMotorsBus(
             remote_prefix=config.remote_prefix,
             local_prefix=f"{config.local_prefix}/{self.session_id}",
-            control_boards=config.control_boards
-            state_boards=config.state_boards
+            control_boards=config.control_boards,
+            state_boards=config.state_boards,
             left_hand=config.left_hand,
             right_hand=config.right_hand,
         )
@@ -153,7 +153,7 @@ class ErgoCub(Robot):
 
         # Basic safety checks (action must be in robot format by now)
         # Determine which hands are active based on configured control boards
-        hands_to_check = [side for side in ["left", "right"] if f"{side}_hand" in self.config.control_boards]
+        hands_to_check = ["left", "right"]
 
         current_state = self.bus.read_state()
 
@@ -219,9 +219,14 @@ class ErgoCub(Robot):
         """Apply any one-time configuration - no-op for ErgoCub."""
 
     @property
-    def _motors_ft(self) -> dict[str, type]:
+    def _action_ft(self) -> dict[str, type]:
         """Get motor features from the bus."""
-        return self.bus.motor_features
+        return self.bus.action_features
+    
+    @property
+    def _state_ft(self) -> dict[str, type]:
+        """Get motor features from the bus."""
+        return self.bus.state_features
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -239,7 +244,7 @@ class ErgoCub(Robot):
         A dictionary describing the structure and types of the observations produced by the robot.
         Values are either float for single values or tuples for array shapes.
         """
-        return {**self._motors_ft, **self._cameras_ft}
+        return {**self._state_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -249,4 +254,4 @@ class ErgoCub(Robot):
         
         Returns action features in SO100-like format with dot notation.
         """
-        return self._motors_ft  # Actions and observations have the same structure
+        return self._action_ft  # Actions and observations have the same structure

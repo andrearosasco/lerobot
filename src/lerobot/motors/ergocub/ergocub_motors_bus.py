@@ -69,7 +69,7 @@ class ErgoCubMotorsBus:
         
         # Optionally add finger controller
         if 'fingers' in parts_needed:
-            self.controllers["fingers"] = ErgoCubFingerController(local_prefix)
+            self.controllers["fingers"] = ErgoCubFingerController(remote_prefix, local_prefix)
 
     @property
     def is_connected(self) -> bool:
@@ -119,14 +119,26 @@ class ErgoCubMotorsBus:
         for board in self.control_boards:
             self.controllers[board].send_commands(commands)
 
+
     @property
-    def motor_features(self) -> dict[str, type]:
-        """Get motor features by aggregating from all controllers."""
+    def state_features(self) -> dict[str, type]:
+        """Get state features by aggregating from all controllers."""
         features = {}
-        for controller in self.controllers.values():
+        for name, controller in self.controllers.items():
+            if name not in self.state_boards:
+                continue 
             features.update(controller.motor_features)
         return features
-
+    
+    @property
+    def action_features(self) -> dict[str, type]:
+        """Get action features by aggregating from all controllers."""
+        features = {}
+        for name, controller in self.controllers.items():
+            if name not in self.control_boards:
+                continue 
+            features.update(controller.motor_features)
+        return features
     # ---------------------------------------------------------------------
     # Reset handling
     # ---------------------------------------------------------------------
