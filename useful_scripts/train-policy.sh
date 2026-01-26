@@ -26,7 +26,7 @@ POLICY=$1
 DATASET=$2
 
 # Fixed settings
-WANDB="false"
+WANDB="true"
 DEVICE="cuda"
 
 # Extract dataset parts
