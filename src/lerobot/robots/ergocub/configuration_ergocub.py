@@ -33,10 +33,10 @@ class ErgoCubConfig(RobotConfig):
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
     # Enable/disable specific body parts
     control_boards: List[str] = field(
-        default_factory=lambda: ["head", "bimanual", "neck", "fingers"]
+        default_factory=lambda: ["head", "bimanual", "fingers"]
     )
     state_boards: List[str] = field(
-        default_factory=lambda: ["head", "bimanual", "neck", "fingers"]
+        default_factory=lambda: ["head", "bimanual", "fingers"]
     )
     left_hand: bool = True
     right_hand: bool = True
