@@ -46,7 +46,7 @@ class PandaGripper(Node):
 
     def apply_commands(self, gripper_state: float, speed: float = None, force: float = None):
         request = PandaGripper.interfaces['apply_commands_gripper'].Request()
-        request.command = PandaGripperCommand(width=float(gripper_state == 0.0))
+        request.command = PandaGripperCommand(width=float(gripper_state < 0.1))
         
         future = self.client_names['apply_commands_gripper'].call_async(request)
         rclpy.spin_until_future_complete(self, future)

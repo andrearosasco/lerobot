@@ -20,6 +20,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from pprint import pformat
 
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.robots.custom_manipulator.grippers.panda_gripper import PandaGripperConfig
 from scipy.spatial.transform import Rotation as R
 
@@ -160,6 +162,8 @@ def record_loop(
         preprocessor.reset()
         postprocessor.reset()
 
+    # TODO add this sleep right after the reset of the gripper at the beginning of the episode
+    # time.sleep(3.0)
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
@@ -177,6 +181,9 @@ def record_loop(
 
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
+        #if timestamp < 0.1:
+        #    observation_frame['observation.state'][-1] = 0.0
+        # print("obs_processed:", observation_frame['observation.state'][-1] )  
 
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
@@ -264,7 +271,7 @@ def record_loop(
 @dataclass
 class DatasetRecordConfig:
     # Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).
-    repo_id: str = "ar0s/pick-turtle2"
+    repo_id: str = "davide-enr/pick-turtle"
     # A short but accurate description of the task performed during the recording
     single_task: str = "Pick up the turtle"
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
@@ -297,6 +304,16 @@ class DatasetRecordConfig:
     def __post_init__(self):
         if self.single_task is None:
             raise ValueError("You need to provide a task as argument in `single_task`.")
+        
+# @dataclass
+# class PolicyConfig(DiffusionConfig):
+#     type = "diffusion"
+#     crop_shape = None
+#     resize_shape = [120, 160]
+#     noise_scheduler_type = "DDIM"
+#     num_inference_steps = 10
+#     pretrained_path = '/home/panda-admin/users/denrico/turtle2CheckpointA'
+    
 
 @dataclass
 class RecordConfig:
@@ -310,12 +327,30 @@ class RecordConfig:
             }
         )
     )
-    teleop: MetaQuestRailConfig = field(default_factory=MetaQuestRailConfig)
+    policy: PreTrainedConfig | None = None
+    teleop: MetaQuestRailConfig =  None #field(default_factory=MetaQuestRailConfig) 
     dataset: DatasetRecordConfig = field(default_factory=DatasetRecordConfig)
     
-    display_data: bool = True
+    display_data: bool = False
     play_sounds: bool = True
     resume: bool = True
+
+
+    def __post_init__(self):
+        # HACK: We parse again the cli args here to get the pretrained path if there was one.
+        policy_path = parser.get_path_arg("policy")
+        if policy_path:
+            cli_overrides = parser.get_cli_overrides("policy")
+            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+            self.policy.pretrained_path = policy_path
+
+        if self.teleop is None and self.policy is None:
+            raise ValueError("Choose a policy, a teleoperator or both to control the robot")
+
+    @classmethod
+    def __get_path_fields__(cls) -> list[str]:
+        """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
+        return ["policy"]
 
 @parser.wrap()
 def record(cfg: RecordConfig):
@@ -327,7 +362,10 @@ def record(cfg: RecordConfig):
 
     # Initialize robot and teleop from config
     robot = CustomManipulator(cfg.robot)
-    teleop = MetaQuestRail(cfg.teleop)
+    if cfg.teleop is not None:
+        teleop = MetaQuestRail(cfg.teleop)
+    else:
+        teleop = None
 
     # Create processors
     # We replace the default teleop_action_processor with our custom one
@@ -386,8 +424,24 @@ def record(cfg: RecordConfig):
             batch_encoding_size=cfg.dataset.video_encoding_batch_size,
         )
 
+    # Load pretrained policy
+    policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
+    preprocessor = None
+    postprocessor = None
+    if cfg.policy is not None:
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=cfg.policy,
+            pretrained_path=cfg.policy.pretrained_path,
+            dataset_stats=rename_stats(dataset.meta.stats, cfg.dataset.rename_map),
+            preprocessor_overrides={
+                "device_processor": {"device": cfg.policy.device},
+                "rename_observations_processor": {"rename_map": cfg.dataset.rename_map},
+            },
+        )
+
     robot.connect()
-    teleop.connect()
+    if cfg.teleop is not None:
+        teleop.connect()
 
     events = {
         "stop_recording": False,
@@ -410,6 +464,9 @@ def record(cfg: RecordConfig):
                 robot_action_processor=robot_action_processor,
                 robot_observation_processor=robot_observation_processor,
                 teleop=teleop,
+                policy=policy,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
                 dataset=dataset,
                 control_time_s=cfg.dataset.episode_time_s,
                 single_task=cfg.dataset.single_task,
@@ -436,7 +493,8 @@ def record(cfg: RecordConfig):
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 
     robot.disconnect()
-    teleop.disconnect()
+    if cfg.teleop is not None:
+        teleop.disconnect()
 
     if not is_headless() and listener is not None:
         listener.stop()
