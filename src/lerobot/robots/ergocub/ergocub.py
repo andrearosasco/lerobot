@@ -73,6 +73,7 @@ class ErgoCub(Robot):
             state_boards=config.state_boards,
             left_hand=config.left_hand,
             right_hand=config.right_hand,
+            finger_scale=config.finger_scale,
         )
 
     def connect(self, calibrate: bool = True):

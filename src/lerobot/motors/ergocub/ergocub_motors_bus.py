@@ -41,6 +41,7 @@ class ErgoCubMotorsBus:
         state_boards: list[str],
         left_hand: bool = True,
         right_hand: bool = True,
+        finger_scale: float = 1.0,
     ):
         """
         Initialize ErgoCub YARP motors bus.
@@ -69,7 +70,7 @@ class ErgoCubMotorsBus:
         
         # Optionally add finger controller
         if 'fingers' in parts_needed:
-            self.controllers["fingers"] = ErgoCubFingerController(remote_prefix, local_prefix)
+            self.controllers["fingers"] = ErgoCubFingerController(remote_prefix, local_prefix, finger_scale=finger_scale)
 
     @property
     def is_connected(self) -> bool:

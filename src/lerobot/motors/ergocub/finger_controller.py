@@ -32,7 +32,7 @@ class ErgoCubFingerController:
     Sends 12 floats (6 for left hand, 6 for right hand) to /ergocub_finger_controller/finger_commands:i
     """
     
-    def __init__(self, remote_prefix: str, local_prefix: str):
+    def __init__(self, remote_prefix: str, local_prefix: str, finger_scale: float = 1.0):
         """
         Initialize finger controller.
         
@@ -56,6 +56,7 @@ class ErgoCubFingerController:
             "left": Manipulator("src/lerobot/robots/ergocub/ergocub_hand_left/model.urdf"),
             "right": Manipulator("src/lerobot/robots/ergocub/ergocub_hand_right/model.urdf"),
         }
+        self.finger_scale = finger_scale  # Scale for fingertip positions
     
     @property
     def is_connected(self) -> bool:
@@ -214,7 +215,7 @@ class ErgoCubFingerController:
             for finger in ["thumb", "index", "middle", "ring", "pinky"]:
                 keys = [f"{side}_fingers.{finger}.{coord}" for coord in ["x", "y", "z"]]
                 if all(k in action for k in keys):
-                    finger_positions.append([action[k] for k in keys])
+                    finger_positions.append([action[k] * self.finger_scale for k in keys])
                     finger_tip_keys.extend(keys)
 
             if len(finger_positions) == 0:
