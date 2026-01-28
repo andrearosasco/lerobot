@@ -96,7 +96,10 @@ class ErgoCub(Robot):
             logger.info("ErgoCub doesn't require calibration - skipping.")
             
         self.configure()
-        logger.info("%s connected.", self)
+        logger.info("%s connected. Going to reset...", self)
+
+        self.reset()
+
 
     def disconnect(self):
         """Disconnect from the robot and perform any necessary cleanup."""
