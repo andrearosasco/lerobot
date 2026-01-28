@@ -20,6 +20,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from pprint import pformat
 
+from pyparsing import Optional
+
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.robots.custom_manipulator.grippers.panda_gripper import PandaGripperConfig
@@ -65,7 +67,7 @@ from lerobot.teleoperators.koch_leader import KochLeader
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from lerobot.utils.control_utils import predict_action
-from typing import Any
+from typing import Any, List
 
 import rerun as rr
 
@@ -162,8 +164,6 @@ def record_loop(
         preprocessor.reset()
         postprocessor.reset()
 
-    # TODO add this sleep right after the reset of the gripper at the beginning of the episode
-    # time.sleep(3.0)
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
@@ -181,9 +181,6 @@ def record_loop(
 
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
-        #if timestamp < 0.1:
-        #    observation_frame['observation.state'][-1] = 0.0
-        # print("obs_processed:", observation_frame['observation.state'][-1] )  
 
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
@@ -199,6 +196,7 @@ def record_loop(
             )
 
             act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
+            print(act_processed_policy)
 
         elif policy is None and isinstance(teleop, Teleoperator):
             act = teleop.get_action()
@@ -240,9 +238,6 @@ def record_loop(
             action_values = act_processed_teleop
             robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
 
-        # Write to dataset ONLY if engaged
-
-        
         _sent_action = robot.send_action(robot_action_to_send)
 
         if dataset is not None:
@@ -271,9 +266,9 @@ def record_loop(
 @dataclass
 class DatasetRecordConfig:
     # Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).
-    repo_id: str = "davide-enr/pick-turtle"
+    repo_id: str = "ar0s/eval_pick-turtle"
     # A short but accurate description of the task performed during the recording
-    single_task: str = "Pick up the turtle"
+    single_task: str = "Pick up the turtle and place it in the box"
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
     root: str | Path | None = None
     # Limit the frames per second.
@@ -283,7 +278,7 @@ class DatasetRecordConfig:
     # Number of seconds for resetting the environment after each episode.
     reset_time_s: int | float = 0
     # Number of episodes to record.
-    num_episodes: int = 10
+    num_episodes: int = 40
     # Encode frames in the dataset into video
     video: bool = True
     # Upload dataset to Hugging Face hub.
@@ -305,14 +300,14 @@ class DatasetRecordConfig:
         if self.single_task is None:
             raise ValueError("You need to provide a task as argument in `single_task`.")
         
-# @dataclass
-# class PolicyConfig(DiffusionConfig):
-#     type = "diffusion"
-#     crop_shape = None
-#     resize_shape = [120, 160]
-#     noise_scheduler_type = "DDIM"
-#     num_inference_steps = 10
-#     pretrained_path = '/home/panda-admin/users/denrico/turtle2CheckpointA'
+@dataclass
+class PolicyConfig(DiffusionConfig):
+    type: str = "diffusion"
+    crop_shape: tuple[int, int] = None
+    resize_shape: List[int] = field(default_factory=lambda: [120, 160])
+    noise_scheduler_type: str = "DDIM"
+    num_inference_steps: int = 10
+    pretrained_path: str = "/home/panda-admin/users/arosasco/lerobot-panda/lerobot/checkpoints/dp-pick-turtle_old/checkpoints/last/pretrained_model"
     
 
 @dataclass
@@ -327,13 +322,13 @@ class RecordConfig:
             }
         )
     )
-    policy: PreTrainedConfig | None = None
+    policy: PreTrainedConfig | None = field(default_factory=PolicyConfig)
     teleop: MetaQuestRailConfig =  None #field(default_factory=MetaQuestRailConfig) 
     dataset: DatasetRecordConfig = field(default_factory=DatasetRecordConfig)
     
     display_data: bool = False
     play_sounds: bool = True
-    resume: bool = True
+    resume: bool = False
 
 
     def __post_init__(self):
@@ -411,7 +406,6 @@ def record(cfg: RecordConfig):
             )
         sanity_check_dataset_robot_compatibility(dataset, robot, cfg.dataset.fps, dataset_features)
     else:
-        sanity_check_dataset_name(cfg.dataset.repo_id, None)
         dataset = LeRobotDataset.create(
             cfg.dataset.repo_id,
             cfg.dataset.fps,
@@ -426,6 +420,7 @@ def record(cfg: RecordConfig):
 
     # Load pretrained policy
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
+    sanity_check_dataset_name(cfg.dataset.repo_id, policy)
     preprocessor = None
     postprocessor = None
     if cfg.policy is not None:

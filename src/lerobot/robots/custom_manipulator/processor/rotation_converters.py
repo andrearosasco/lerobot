@@ -47,7 +47,11 @@ class AxisAngleToRot6D(ProcessorStep):
 
                 # Add 6D keys
                 for i in range(6):
-                    action_features[f"orientation_6d.{i}"] = PolicyFeature(type=dtype, shape=())
+                    action_features[f"action.orientation_6d.{i}"] = PolicyFeature(type=dtype, shape=())
+
+                gripper = action_features['action.gripper']
+                del action_features['action.gripper']
+                action_features['action.gripper'] = gripper
 
         return features
 

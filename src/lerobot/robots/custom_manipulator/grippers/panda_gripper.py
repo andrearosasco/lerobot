@@ -66,6 +66,7 @@ class PandaGripper(Node):
         self.apply_commands(gripper_state=1.0)
         time.sleep(1)
         self.apply_commands(gripper_state=0.0)
+        time.sleep(1)
 
     @property
     def features(self) -> dict:
