@@ -207,7 +207,7 @@ class ImageCropResizeProcessorStep(ObservationProcessorStep):
 
         # Process all image keys in the observation
         for key in observation:
-            if "image" not in key:
+            if "image" not in key or "is_pad" in key:
                 continue
 
             image = observation[key]
@@ -220,7 +220,10 @@ class ImageCropResizeProcessorStep(ObservationProcessorStep):
                 crop_params = self.crop_params_dict[key]
                 image = F.crop(image, *crop_params)
             if self.resize_size is not None:
+                origin_shape = image.shape
+                image = image.reshape(-1, 3, origin_shape[-2], origin_shape[-1])
                 image = F.resize(image, self.resize_size)
+                image = image.reshape(origin_shape[0], origin_shape[1], 3, *self.resize_size)
                 image = image.clamp(0.0, 1.0)
             new_observation[key] = image.to(device)
 

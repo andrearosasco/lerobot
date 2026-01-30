@@ -37,7 +37,7 @@ def debug_training_images(cfg, dataset, batch, step):
     debug_dir = Path(cfg.output_dir) / "debug_images"
     debug_dir.mkdir(exist_ok=True, parents=True)
     for key in batch:
-        if "image" in key and isinstance(batch[key], torch.Tensor):
+        if "image" in key and "is_pad" not in key and isinstance(batch[key], torch.Tensor):
             imgs = batch[key][:4].cpu()  # First 4 samples
             # Check if images are normalized and denormalize
             if imgs.min() < 0 or imgs.max() > 1.5:

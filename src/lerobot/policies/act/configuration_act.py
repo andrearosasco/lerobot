@@ -105,9 +105,10 @@ class ACTConfig(PreTrainedConfig):
 
     # Architecture.
     # Vision backbone.
-    vision_backbone: str = "resnet18"
-    pretrained_backbone_weights: str | None = "ResNet18_Weights.IMAGENET1K_V1"
-    replace_final_stride_with_dilation: int = False
+    vision_backbone: str = "resnet18"  # Options: any torchvision resnet or "videomae"
+    pretrained_backbone_weights: str | None = "ResNet18_Weights.IMAGENET1K_V1"  # For ResNet. For VideoMAE, use HuggingFace model name or None.
+    replace_final_stride_with_dilation: int = False  # Only for ResNet
+    videomae_model_name: str = "OpenGVLab/VideoMAEv2-Base"  # Only used if vision_backbone == "videomae"
     # Transformer layers.
     pre_norm: bool = False
     dim_model: int = 512
@@ -151,10 +152,12 @@ class ACTConfig(PreTrainedConfig):
         super().__post_init__()
 
         """Input validation (not exhaustive)."""
-        if not self.vision_backbone.startswith("resnet"):
+        if not (self.vision_backbone.startswith("resnet") or self.vision_backbone == "videomae"):
             raise ValueError(
-                f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
+                f"`vision_backbone` must be one of the ResNet variants or 'videomae'. Got {self.vision_backbone}."
             )
+        if self.vision_backbone == "videomae" and not hasattr(self, "videomae_model_name"):
+            raise ValueError("If using VideoMAE, you must specify 'videomae_model_name'.")
         if self.use_language_conditioning and self.language_encoder_type not in ["clip", "bert", "t5"]:
             raise ValueError(
                 f"language_encoder_type must be 'clip', 'bert', or 't5'. Got {self.language_encoder_type}."
@@ -169,10 +172,10 @@ class ACTConfig(PreTrainedConfig):
                 f"The chunk size is the upper bound for the number of action steps per model invocation. Got "
                 f"{self.n_action_steps} for `n_action_steps` and {self.chunk_size} for `chunk_size`."
             )
-        if self.n_obs_steps != 1:
-            raise ValueError(
-                f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
-            )
+        # if self.n_obs_steps != 1:
+        #     raise ValueError(
+        #         f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
+        #     )
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(
@@ -188,12 +191,12 @@ class ACTConfig(PreTrainedConfig):
             raise ValueError("You must provide at least one image or the environment state among the inputs.")
 
     @property
-    def observation_delta_indices(self) -> None:
-        return None
+    def observation_delta_indices(self) -> list:
+        return list(range(1 - self.n_obs_steps, 1))
 
     @property
     def action_delta_indices(self) -> list:
-        return list(range(self.chunk_size))
+        return list(range(1 - self.n_obs_steps, 1 - self.n_obs_steps + self.chunk_size))
 
     @property
     def reward_delta_indices(self) -> None:

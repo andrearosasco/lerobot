@@ -328,15 +328,16 @@ class ACT(nn.Module):
 
         # Backbone for image feature extraction.
         if self.config.image_features:
-            backbone_model = getattr(torchvision.models, config.vision_backbone)(
-                replace_stride_with_dilation=[False, False, config.replace_final_stride_with_dilation],
-                weights=config.pretrained_backbone_weights,
-                norm_layer=FrozenBatchNorm2d,
-            )
-            # Note: The assumption here is that we are using a ResNet model (and hence layer4 is the final
-            # feature map).
-            # Note: The forward method of this returns a dict: {"feature_map": output}.
-            self.backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
+            if self.config.vision_backbone.startswith("resnet"):
+                backbone_model = getattr(torchvision.models, config.vision_backbone)(
+                    replace_stride_with_dilation=[False, False, config.replace_final_stride_with_dilation],
+                    weights=config.pretrained_backbone_weights,
+                    norm_layer=FrozenBatchNorm2d,
+                )
+                # Note: The assumption here is that we are using a ResNet model (and hence layer4 is the final
+                # feature map).
+                # Note: The forward method of this returns a dict: {"feature_map": output}.
+                self.backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
 
         # Transformer (acts as VAE decoder when training with the variational objective).
         self.encoder = ACTEncoder(config)
@@ -353,7 +354,7 @@ class ACT(nn.Module):
                 self.config.env_state_feature.shape[0], config.dim_model
             )
         self.encoder_latent_input_proj = nn.Linear(config.latent_dim, config.dim_model)
-        if self.config.image_features:
+        if self.config.image_features and self.config.vision_backbone.startswith("resnet"):
             self.encoder_img_feat_input_proj = nn.Conv2d(
                 backbone_model.fc.in_features, config.dim_model, kernel_size=1
             )
@@ -392,6 +393,15 @@ class ACT(nn.Module):
             
             self.language_dropout = nn.Dropout(config.language_dropout)
             self.language_norm = nn.LayerNorm(config.dim_model)
+
+        # VideoMAE integration
+        if self.config.vision_backbone == "videomae":
+            from transformers import VideoMAEImageProcessor, AutoModel
+            self.videomae_processor = VideoMAEImageProcessor.from_pretrained(self.config.videomae_model_name, trust_remote_code=True)
+            self.videomae_model = AutoModel.from_pretrained(self.config.videomae_model_name, trust_remote_code=True).eval()
+            self.videomae_out_proj = nn.Linear(768, config.dim_model)  # Project VideoMAE output to model dim
+            for param in self.videomae_model.parameters():
+                param.requires_grad = False  # Freeze VideoMAE model
         
         # Transformer encoder positional embeddings.
         n_1d_tokens = 1  # for the latent
@@ -446,6 +456,10 @@ class ACT(nn.Module):
 
         batch_size = batch[OBS_IMAGES][0].shape[0] if OBS_IMAGES in batch else batch[OBS_ENV_STATE].shape[0]
 
+        for key in list(batch.keys()):
+            if "observation" in key and "image" not in key:
+                batch[key] = batch[key][:, -1:, ...]  # Keep only the last observation step.
+
         # Prepare the latent for input to the transformer encoder.
         if self.config.use_vae and ACTION in batch and self.training:
             # Prepare the input to the VAE encoder: [cls, *joint_space_configuration, *action_sequence].
@@ -454,7 +468,8 @@ class ACT(nn.Module):
             )  # (B, 1, D)
             if self.config.robot_state_feature:
                 robot_state_embed = self.vae_encoder_robot_state_input_proj(batch[OBS_STATE])
-                robot_state_embed = robot_state_embed.unsqueeze(1)  # (B, 1, D)
+                if robot_state_embed.dim() == 2:  # When receiving more images, shape is (B, S, D)
+                    robot_state_embed = robot_state_embed.unsqueeze(1)  # (B, 1, D)
             action_embed = self.vae_encoder_action_input_proj(batch[ACTION])  # (B, S, D)
 
             if self.config.robot_state_feature:
@@ -561,24 +576,82 @@ class ACT(nn.Module):
             encoder_in_tokens.append(self.encoder_env_state_input_proj(batch[OBS_ENV_STATE]))
 
         if self.config.image_features:
-            # For a list of images, the H and W may vary but H*W is constant.
-            # NOTE: If modifying this section, verify on MPS devices that
-            # gradients remain stable (no explosions or NaNs).
-            for img in batch[OBS_IMAGES]:
-                cam_features = self.backbone(img)["feature_map"]
-                cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
-                cam_features = self.encoder_img_feat_input_proj(cam_features)
+            if self.config.vision_backbone == "videomae":
+                # Get the correct image key (default: observation.images)
+                image_key = getattr(self.config, 'image_obs_key', 'observation.images')
+                possible_keys = [image_key, image_key.replace('observation.', '')]
+                img_seq = None
+                for k in possible_keys:
+                    if k in batch:
+                        img_seq = batch[k][0]
+                        break
+                if img_seq is None:
+                    # fallback: try both known keys
+                    if 'observation.images' in batch:
+                        img_seq = batch['observation.images'][0]
+                    elif 'observation.images.egocentric' in batch:
+                        img_seq = batch['observation.images.egocentric'][0]
+                    else:
+                        raise KeyError(f"No valid image key found in batch. Available keys: {list(batch.keys())}")
 
-                # Rearrange features to (sequence, batch, dim).
-                cam_features = einops.rearrange(cam_features, "b c h w -> (h w) b c")
-                cam_pos_embed = einops.rearrange(cam_pos_embed, "b c h w -> (h w) b c")
+                # img_seq: (B, S, C, H, W) or (B, C, H, W) or (B, H, W, C)
+                # Always get the latest 16 frames (or pad if less)
+                if img_seq.ndim == 5:
+                    # (B, S, C, H, W)
+                    if img_seq.shape[1] >= 16:
+                        img_seq = img_seq[:, -16:, ...]
+                    else:
+                        # Pad at the start if not enough frames
+                        pad = 16 - img_seq.shape[1]
+                        img_seq = torch.cat([img_seq[:, :1, ...].repeat(1, pad, 1, 1, 1), img_seq], dim=1)
+                elif img_seq.ndim == 4:
+                    # (B, C, H, W) or (B, H, W, C)
+                    if img_seq.shape[-1] == 3 and img_seq.shape[1] != 3:
+                        # (B, H, W, C) -> (B, 1, C, H, W)
+                        img_seq = img_seq.permute(0, 3, 1, 2).unsqueeze(1)
+                    else:
+                        # (B, C, H, W) -> (B, 1, C, H, W)
+                        img_seq = img_seq.unsqueeze(1)
+                    # Repeat to 16 frames
+                    img_seq = img_seq.repeat(1, 16, 1, 1, 1)
+                else:
+                    raise ValueError(f"Unexpected image shape: {img_seq.shape}")
 
-                # Extend immediately instead of accumulating and concatenating
-                # Convert to list to extend properly
-                encoder_in_tokens.extend(list(cam_features))
-                encoder_in_pos_embed.extend(list(cam_pos_embed))
+                # Ensure RGB
+                if img_seq.shape[2] == 1:
+                    img_seq = img_seq.repeat(1, 1, 3, 1, 1)
+
+                # (B, 16, C, H, W) -> (B, 16, H, W, C) for processor
+                img_seq = img_seq.permute(0, 1, 3, 4, 2)
+                # Convert to list of list of np.ndarray (H, W, 3)
+                img_seq_np = [ [frame.cpu().numpy() for frame in sample] for sample in img_seq ]
+                # Use only the processor for normalization etc.
+                with torch.no_grad():
+                    processed = self.videomae_processor(img_seq_np, return_tensors="pt")
+                    for k in processed:
+                        processed[k] = processed[k].to(img_seq.device).permute(0, 2, 1, 3, 4)
+                    features = self.videomae_model(**processed)  # (B, 768)
+                features = self.videomae_out_proj(features)  # (B, dim_model)
+                encoder_in_tokens.append(features)
+                encoder_in_pos_embed.append(self.encoder_1d_feature_pos_embed.weight[0].unsqueeze(0))
+            else:
+                # ResNet/other backbone as before
+                for img in batch[OBS_IMAGES]:
+                    cam_features = self.backbone(img)["feature_map"]
+                    cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
+                    cam_features = self.encoder_img_feat_input_proj(cam_features)
+                    cam_features = einops.rearrange(cam_features, "b c h w -> (h w) b c")
+                    cam_pos_embed = einops.rearrange(cam_pos_embed, "b c h w -> (h w) b c")
+                    encoder_in_tokens.extend(list(cam_features))
+                    encoder_in_pos_embed.extend(list(cam_pos_embed))
 
         # Stack all tokens along the sequence dimension.
+
+
+        # TODO REMOVE DEBUG
+        encoder_in_tokens[1] = encoder_in_tokens[1].squeeze(1)
+        # TODO REMOVE DEBUG
+
         encoder_in_tokens = torch.stack(encoder_in_tokens, axis=0)
         encoder_in_pos_embed = torch.stack(encoder_in_pos_embed, axis=0)
 

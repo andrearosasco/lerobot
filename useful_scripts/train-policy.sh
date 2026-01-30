@@ -99,6 +99,8 @@ case $POLICY in
         CMD+=(
             --policy.chunk_size=20
             --policy.n_action_steps=20
+            --policy.n_obs_steps=16
+            --policy.vision_backbone=videomae
         )
         ;;
     diffusion)  # they use 10fps datasets, so default values are good

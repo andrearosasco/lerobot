@@ -54,6 +54,12 @@ from lerobot.utils.utils import (
     init_logging,
 )
 
+import debugpy
+debugpy.listen(5678)
+print("Waiting for debugger attach...")
+debugpy.wait_for_client()
+print("Debugger attached.")
+
 
 def update_policy(
     train_metrics: MetricsTracker,
@@ -404,6 +410,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info(
             f"Start offline training on a fixed dataset, with effective batch size: {effective_batch_size}"
         )
+
+    # TODO REMOVE DEBUG
+    preprocessor.steps.pop(-1)
+    # TODO REMOVE DEBUG
 
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
