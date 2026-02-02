@@ -401,6 +401,12 @@ class ACT(nn.Module):
             n_1d_tokens += 1
         if self.config.env_state_feature:
             n_1d_tokens += 1
+        # TODO PARAMETRIZE START
+        n_1d_tokens += 1
+        self.videomae_projector = torch.nn.Linear(768, 512).to("cuda")
+        self.videomae_norm = torch.nn.LayerNorm(512).to("cuda")
+        self.videomae_activation = torch.nn.ReLU().to("cuda")
+        # TODO PARAMETRIZE END
         self.encoder_1d_feature_pos_embed = nn.Embedding(n_1d_tokens, config.dim_model)
         if self.config.image_features:
             self.encoder_cam_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.dim_model // 2)
@@ -553,6 +559,14 @@ class ACT(nn.Module):
             # Add to encoder inputs (after latent)
             encoder_in_tokens.append(lang_emb)
         
+        # TODO PARAMETRIZE START
+        x = batch["observation.videomae_feat"]
+        x = torch.nan_to_num(x, nan=0.0)
+        x = self.videomae_projector(x)
+        x = self.videomae_activation(x)
+        x = self.videomae_norm(x)
+        encoder_in_tokens.append(x)
+        # TODO PARAMETRIZE END
         # Robot state token.
         if self.config.robot_state_feature:
             encoder_in_tokens.append(self.encoder_robot_state_input_proj(batch[OBS_STATE]))
