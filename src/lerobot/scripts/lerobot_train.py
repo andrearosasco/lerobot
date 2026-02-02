@@ -225,6 +225,45 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
+
+    # TODO DIRTY VIDOEMAE INTEGRTATION START
+    if "observation.videomae_feat" in dataset.features:
+        logging.info("Processing VideoMAE features with principled approach")
+        from sklearn.preprocessing import RobustScaler
+        from sklearn.decomposition import PCA
+        import numpy as np
+
+        raw_feats = np.array(dataset.hf_dataset["observation.videomae_feat"])
+
+        # Remove nan rows
+        raw_feats = raw_feats[~np.isnan(raw_feats).any(axis=1)]
+        # raw_feats[np.isnan(raw_feats)] = 0.
+        deltas = np.diff(raw_feats, axis=0, prepend=raw_feats[0:1])
+        combined_feats = np.hstack([raw_feats, deltas])
+
+        scaler = RobustScaler()
+        scaled_feats = scaler.fit_transform(combined_feats)
+
+        pca = PCA(n_components=100, random_state=42)
+        denoised_feats = pca.fit_transform(scaled_feats)
+
+        # Visualization (t-SNE)
+        import matplotlib.pyplot as plt
+        from sklearn.manifold import TSNE
+        tsne = TSNE(n_components=2, perplexity=50, random_state=42)
+        feats_tsne = tsne.fit_transform(denoised_feats)
+        plt.scatter(feats_tsne[:, 0], feats_tsne[:, 1])
+        plt.title("Action Clusters (GMM Labeled)")
+        plt.savefig("feats_tsne_principled.png")
+        plt.close()
+
+        dataset.hf_dataset = dataset.hf_dataset.remove_columns("observation.videomae_feat")
+        dataset.hf_dataset = dataset.hf_dataset.add_column(
+            "observation.videomae_feat",
+            [denoised_feats[i] for i in range(denoised_feats.shape[0])]
+        )
+    # TODO DIRTY VIDOEMAE INTEGRATION END
+
     eval_env = None
     if cfg.eval_freq > 0 and cfg.env is not None and is_main_process:
         logging.info("Creating env")
@@ -408,7 +447,15 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
+        # TODO DIRTY VIDEOMAE INTEGRATION START
+        if "observation.videomae_feat" in batch:
+            tapullo = batch["observation.videomae_feat"]
+        # TODO DIRTY VIDEOMAE INTEGRATION END
         batch = preprocessor(batch)
+        # TODO DIRTY VIDEOMAE INTEGRATION START
+        if "observation.videomae_feat" in batch:
+            batch["observation.videomae_feat"] = tapullo
+        # TODO DIRTY VIDEOMAE INTEGRATION END
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
 

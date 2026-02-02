@@ -226,6 +226,8 @@ class RecordConfig:
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
+    # Compute VideoMAE features live during recording
+    compute_videomae_features_live: bool = False
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -299,6 +301,7 @@ def record_loop(
     single_task: str | None = None,
     display_data: bool = False,
     display_compressed_images: bool = False,
+    compute_videomae_features_live: bool = False,
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -336,6 +339,23 @@ def record_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
+
+    # # TODO START DIRRTY ACT INTEGRATION
+    # # VideoMAE model setup
+    if compute_videomae_features_live:
+        from transformers import VideoMAEImageProcessor, AutoModel, AutoConfig
+        from collections import deque
+        import torch
+        import numpy as np
+        MODEL_NAME = "OpenGVLab/VideoMAEv2-Base"
+        DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+        vm_config = AutoConfig.from_pretrained(MODEL_NAME, trust_remote_code=True)
+        vm_processor = VideoMAEImageProcessor.from_pretrained(MODEL_NAME)
+        vm_model = AutoModel.from_pretrained(MODEL_NAME, config=vm_config, trust_remote_code=True).to(DEVICE)
+        vm_model.eval()
+        window = deque(maxlen=16)
+    # # TODO END
+
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
@@ -346,11 +366,30 @@ def record_loop(
         # Get robot observation
         obs = robot.get_observation()
 
+        # # TODO START BAD VIDOEMAE INTEGRTATION
+        if compute_videomae_features_live:
+            window.append(np.array(obs["egocentric"]))
+            if len(window) == 16:
+                video = list(window)
+                inputs = vm_processor(video, return_tensors="pt")
+                inputs['pixel_values'] = inputs['pixel_values'].permute(0, 2, 1, 3, 4).to(DEVICE)
+                with torch.no_grad():
+                    vm_features = vm_model(**inputs).squeeze()
+                obs["observation.videomae_feat"] = vm_features
+            else:
+                continue
+        # # TODO END BAD VIDOEMAE INTEGRTATION
+
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
         obs_processed = robot_observation_processor(obs)
 
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
+
+        # # TODO FIX BAD INT START
+        if compute_videomae_features_live:
+            observation_frame["observation.videomae_feat"] = vm_features.cpu().numpy()
+        # # TODO END
 
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:

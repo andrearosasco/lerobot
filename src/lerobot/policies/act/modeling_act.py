@@ -401,6 +401,10 @@ class ACT(nn.Module):
             n_1d_tokens += 1
         if self.config.env_state_feature:
             n_1d_tokens += 1
+        # TODO VIDEOMAE PARAMETRIZE START
+        if self.config.use_videomae_features:
+            n_1d_tokens += 1
+        # TODO VIDEOMAE PARAMETRIZE END
         self.encoder_1d_feature_pos_embed = nn.Embedding(n_1d_tokens, config.dim_model)
         if self.config.image_features:
             self.encoder_cam_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.dim_model // 2)
@@ -444,7 +448,7 @@ class ACT(nn.Module):
                 "actions must be provided when using the variational objective in training mode."
             )
 
-        batch_size = batch[OBS_IMAGES][0].shape[0] if OBS_IMAGES in batch else batch[OBS_ENV_STATE].shape[0]
+        batch_size = batch[OBS_IMAGES][0].shape[0] if OBS_IMAGES in batch else batch[OBS_ENV_STATE].shape[0] if OBS_ENV_STATE in batch else batch[OBS_STATE].shape[0]
 
         # Prepare the latent for input to the transformer encoder.
         if self.config.use_vae and ACTION in batch and self.training:
@@ -552,6 +556,11 @@ class ACT(nn.Module):
             
             # Add to encoder inputs (after latent)
             encoder_in_tokens.append(lang_emb)
+        
+        # TODO VIDEOMAE PARAMETRIZE START
+        if "observation.videomae_feat" in batch:
+            encoder_in_tokens.append(batch["observation.videomae_feat"])
+        # TODO VIDEOMAE PARAMETRIZE END
         
         # Robot state token.
         if self.config.robot_state_feature:

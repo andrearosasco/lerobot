@@ -74,14 +74,13 @@
         "--robot.remote_prefix=/ergocubSim",
         "--robot.local_prefix=/lerobot",
         "--robot.cameras={egocentric:{\"type\": \"yarp\", \"yarp_name\": \"ergocubSim/depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
-        "--robot.control_boards=[head,left_hand,right_hand,fingers,torso]",
-        "--dataset.repo_id=HSP-IIT/eval_test",
-        "--dataset.fps=10",
-        "--policy.path=steb6/act_redball_sim_reactive",
-        "--dataset.single_task=get the ball",
+        "--robot.control_boards=[head,bimanual,fingers]",
+        "--dataset.repo_id=steb6/eval_test",
+        "--policy.path=steb6/act_HOME_wave_shake-videomaefeat-nocam",
+        "--dataset.single_task=interact with the human",
         "--dataset.reset_time=0",
         "--dataset.episode_time=300",
-        "--dataset.fps=10"
+        "--compute_videomae_features_live=true"
       ]
     },
     {
@@ -93,22 +92,23 @@
       "env": {
         "PYTHONPATH": "${workspaceFolder}/src"
       },
-      "preLaunchTask": "clear-test",
+      "preLaunchTask": "clear-train",
+      "python": "/home/sberti/.local/share/mamba/envs/lerobot/bin/python",
       "args": [
         "--policy.type=act",
-        "--policy.repo_id=HSP-IIT/trained_hri2_splitted",
-        "--dataset.repo_id=HSP-IIT/redball_sim",
+        "--policy.repo_id=HSP-IIT/test",
+        "--dataset.repo_id=steb6/redball_sim_reactive",
         "--policy.device=cuda",
-        "--output_dir=checkpoints/hri2_splitted",
-        "--policy.use_language_conditioning=true"
+        "--output_dir=checkpoints/test"
       ]
     },
     {
-      "name": "Record",
+      "name": "Record (Sim)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_record.py",
       "console": "integratedTerminal",
+      "python": "/home/sberti/.local/share/mamba/envs/lerobot/bin/python",
       "env": {
         "PYTHONPATH": "${workspaceFolder}/src"
       },
@@ -117,15 +117,17 @@
         "--robot.type=ergocub",
         "--robot.remote_prefix=/ergocubSim",
         "--robot.local_prefix=/lerobot",
-        "--robot.cameras={egocentric:{\"type\": \"yarp\", \"yarp_name\": \"ergocubSim/depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
-        "--robot.control_boards=[head,left_hand,right_hand,fingers,torso]",
+        "--robot.cameras={egocentric:{\"type\": \"yarp\", \"yarp_name\": \"stream/video:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
+        "--robot.control_boards=[head,bimanual]",
+        "--teleop.finger_scale=1",
         "--teleop.type=metaquest",
-        "--dataset.repo_id=steb6/test2",
+        "--dataset.repo_id=steb6/HOME_GZ_shake",
         "--dataset.num_episodes=1",
         "--dataset.fps=10",
         "--dataset.reset_time=1",
-        "--dataset.episode_time=30",
-        "--dataset.single_task=get the ball"
+        "--dataset.episode_time=280",
+        "--dataset.single_task=interact with the human",
+        "--compute_videomae_features_live=false"
       ]
     },
     {
