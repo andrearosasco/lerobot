@@ -26,7 +26,7 @@ POLICY=$1
 DATASET=$2
 
 # Fixed settings
-WANDB="false"
+WANDB="true"
 DEVICE="cuda"
 
 # Extract dataset parts
@@ -55,6 +55,7 @@ CMD=(
     --output_dir="checkpoints/$OUTPUT"
     --image_crop_params='{"observation.images.egocentric": [0, 80, 480, 480]}' 
 	--image_resize_size="[256,256]"
+    --dataset.video_backend="pyav"
     --dataset.image_transforms.enable=true
     --dataset.image_transforms.max_num_transforms=3
     --dataset.image_transforms.random_order=true
@@ -99,6 +100,7 @@ case $POLICY in
         CMD+=(
             --policy.chunk_size=20
             --policy.n_action_steps=20
+            --policy.dim_model=768
         )
         ;;
     diffusion)  # they use 10fps datasets, so default values are good
