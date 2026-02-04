@@ -15,6 +15,7 @@
 ### Environments & Dependencies ###
 .env
 .venv
+.envrc
 env/
 venv/
 env.bak/

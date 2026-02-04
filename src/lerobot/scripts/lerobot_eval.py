@@ -323,7 +323,7 @@ def eval_policy(
         episode_data: dict | None = None
 
     # we dont want progress bar when we use slurm, since it clutters the logs
-    progbar = trange(n_batches, desc="Stepping through eval batches", disable=inside_slurm())
+    progbar = trange(n_batches, desc="Stepping through eval batches", disable=inside_slurm(), leave=False)
     for batch_ix in progbar:
         # Cache frames for rendering videos. Each item will be (b, h, w, c), and the list indexes the rollout
         # step.
@@ -573,7 +573,9 @@ def eval_main(cfg: EvalPipelineConfig):
     close_envs(envs)
 
     # Save info
-    with open(Path(cfg.output_dir) / "eval_info.json", "w") as f:
+    out_dir = Path(cfg.output_dir) / cfg.env.task
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with open(out_dir /"eval_info.json", "w") as f:
         json.dump(info, f, indent=2)
 
     logging.info("End of eval")
@@ -751,13 +753,17 @@ def eval_policy_all(
     if max_parallel_tasks <= 1:
         # sequential path (single accumulator path on the main thread)
         # NOTE: keeping a single-threaded accumulator avoids concurrent list appends or locks
+        tasks_pbar = trange(len(tasks), desc="Evaluating tasks", disable=inside_slurm(), leave=False)
         for task_group, task_id, env in tasks:
             tg, tid, metrics = task_runner(task_group, task_id, env)
             _accumulate_to(tg, metrics)
             per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+            tasks_pbar.update(1)
+        tasks_pbar.close()
     else:
         # threaded path: submit all tasks, consume completions on main thread and accumulate there
         with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
+            tasks_pbar = trange(len(tasks), desc="Evaluating tasks", disable=inside_slurm(), leave=False)
             fut2meta = {}
             for task_group, task_id, env in tasks:
                 fut = executor.submit(task_runner, task_group, task_id, env)
@@ -766,6 +772,8 @@ def eval_policy_all(
                 tg, tid, metrics = fut.result()
                 _accumulate_to(tg, metrics)
                 per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+                tasks_pbar.update(1)
+            tasks_pbar.close()
 
     # compute aggregated metrics helper (robust to lists/scalars)
     def _agg_from_list(xs):
@@ -804,9 +812,12 @@ def eval_policy_all(
 
 
 def main():
+    import time
+    start_time = time.time()
     init_logging()
     register_third_party_plugins()
     eval_main()
+    print(f"Total eval time: {time.time() - start_time:.2f} seconds")
 
 
 if __name__ == "__main__":
