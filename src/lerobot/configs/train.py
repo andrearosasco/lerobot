@@ -38,6 +38,7 @@ class TrainPipelineConfig(HubMixin):
     dataset: DatasetConfig
     env: envs.EnvConfig | None = None
     policy: PreTrainedConfig | None = None
+    use_videomae_features: bool = False  # Whether to use the pre-extracted VideoMAE features instead of raw images. This is only a flag that will be used to automatically set the observation keys in the policy and dataset configs, but it won't do any actual feature extraction. You need to make sure your dataset already has the VideoMAE features extracted and stored in a column named "observation.videomae_feat" for this to work.
     # Set `dir` to where you would like to save all of the run outputs. If you run another training session
     # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
     output_dir: Path | None = None

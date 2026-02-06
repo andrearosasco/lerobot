@@ -227,40 +227,44 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # using the eval.py instead, with gym_dora environment and dora-rs.
 
     # TODO DIRTY VIDOEMAE INTEGRTATION START
-    if "observation.videomae_feat" in dataset.features:
+    if cfg.use_videomae_features:
+        if not "observation.videomae_feat" in dataset.hf_dataset.column_names:
+            raise ValueError("use_videomae_features is set to True but the dataset does not contain the 'observation.videomae_feat' column. Please make sure your dataset has the VideoMAE features extracted and stored in a column named 'observation.videomae_feat'.")
         logging.info("Processing VideoMAE features with principled approach")
         from sklearn.preprocessing import RobustScaler
         from sklearn.decomposition import PCA
         import numpy as np
-
-        raw_feats = np.array(dataset.hf_dataset["observation.videomae_feat"])
-
-        # Remove nan rows
-        raw_feats = raw_feats[~np.isnan(raw_feats).any(axis=1)]
-        # raw_feats[np.isnan(raw_feats)] = 0.
-        deltas = np.diff(raw_feats, axis=0, prepend=raw_feats[0:1])
-        combined_feats = np.hstack([raw_feats, deltas])
-
+        import joblib
+        import os
+        os.makedirs("LAST_TRAINING", exist_ok=True)
+        hf_raw = dataset.hf_dataset.with_format(None)
+        # valid_indices = [
+        #     i for i, feat in enumerate(hf_raw["observation.videomae_feat"]) 
+        #     if feat is not None
+        # ]
+        features = np.array(hf_raw["observation.videomae_feat"])  # for i in valid_indices])
+        
+        mask = ~np.isnan(features).any(axis=1)
+        features = features[mask]
+        
         scaler = RobustScaler()
-        scaled_feats = scaler.fit_transform(combined_feats)
-
-        pca = PCA(n_components=100, random_state=42)
+        scaled_feats = scaler.fit_transform(features)
+        joblib.dump(scaler, "LAST_TRAINING/scaler.joblib")
+        pca = PCA(n_components=2, random_state=42)
         denoised_feats = pca.fit_transform(scaled_feats)
-
-        # Visualization (t-SNE)
+        colors = np.array(dataset.hf_dataset["episode_index"])[15:]
+        last_zero_index = np.where(colors == 0)[0][-1]
+        colors = np.concatenate([colors[:last_zero_index], colors[last_zero_index+15:]])
         import matplotlib.pyplot as plt
-        from sklearn.manifold import TSNE
-        tsne = TSNE(n_components=2, perplexity=50, random_state=42)
-        feats_tsne = tsne.fit_transform(denoised_feats)
-        plt.scatter(feats_tsne[:, 0], feats_tsne[:, 1])
-        plt.title("Action Clusters (GMM Labeled)")
-        plt.savefig("feats_tsne_principled.png")
+        plt.scatter(denoised_feats[:, 0], denoised_feats[:, 1], c=colors, s=1)
+        plt.title("PCA of VideoMAE Features")
+        plt.savefig("LAST_TRAINING/PCA.png")
         plt.close()
-
         dataset.hf_dataset = dataset.hf_dataset.remove_columns("observation.videomae_feat")
+        pad = np.zeros((15, scaled_feats.shape[-1]))
         dataset.hf_dataset = dataset.hf_dataset.add_column(
             "observation.videomae_feat",
-            [denoised_feats[i] for i in range(denoised_feats.shape[0])]
+            list(np.concatenate([pad, scaled_feats[:last_zero_index], pad, scaled_feats[last_zero_index:]]))
         )
     # TODO DIRTY VIDOEMAE INTEGRATION END
 

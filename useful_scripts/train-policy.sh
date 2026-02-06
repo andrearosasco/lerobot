@@ -59,6 +59,8 @@ CMD=(
     --policy.repo_id="$REPO_ID"
     --dataset.repo_id="$DATASET"
     --policy.device="$DEVICE"
+    --use_videomae_features=true
+    --policy.use_videomae_features=true
     --output_dir="checkpoints/$OUTPUT"
     --image_crop_params='{"observation.images.egocentric": [0, 80, 480, 480]}' 
 	--image_resize_size="[256,256]"
@@ -108,7 +110,6 @@ case $POLICY in
             --policy.chunk_size=20
             --policy.n_action_steps=20
             --policy.dim_model=768
-            --policy.use_videomae_features=true
         )
         ;;
     diffusion)  # they use 10fps datasets, so default values are good
