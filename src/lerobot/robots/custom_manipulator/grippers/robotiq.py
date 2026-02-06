@@ -28,9 +28,9 @@ class Robotiq(Node):
         self.gripper_pub = self.create_publisher(GripperCmd, '/gripper/cmd', 1)
         self.gripper_state = None
 
-    def apply_commands(self, width:float, speed:float=None, force:float=None):
+    def apply_commands(self, gripper_state:float, speed:float=None, force:float=None):
         cmd_msg = GripperCmd()
-        cmd_msg.position = width
+        cmd_msg.position = float((1 - gripper_state) > 0.5)
         cmd_msg.force = force if force is not None else self.config.force
         cmd_msg.speed = speed if speed is not None else self.config.speed
         self.gripper_pub.publish(cmd_msg)
@@ -39,7 +39,7 @@ class Robotiq(Node):
         self.gripper_state = Future()
         # This spins until a message is received on the topic
         rclpy.spin_until_future_complete(self, self.gripper_state)
-        return {'grip_joint_pos': np.array([self.gripper_state.result().position])}
+        return {'gripper': self.gripper_state.result().position}
 
     def connect(self):
         pass
@@ -48,9 +48,10 @@ class Robotiq(Node):
         self.reset()
 
     def reset(self, width=0.1, **kwargs):
-        self.apply_commands(width=0.0)
+        self.apply_commands(gripper_state=1.0)
         time.sleep(2)
-        self.apply_commands(width=1.0)
+        self.apply_commands(gripper_state=0.0)
+        time.sleep(2)
 
     def _state_topic_callback(self, msg):
         if self.gripper_state is not None and not self.gripper_state.done():
@@ -60,5 +61,5 @@ class Robotiq(Node):
     @property
     def features(self) -> dict:
         return {
-            "gripper.pos": float,
+            "gripper": float,
         }

@@ -51,7 +51,12 @@ from lerobot.robots.custom_manipulator.processor.metaquest_processor import Meta
 from lerobot.robots.custom_manipulator.processor.rotation_converters import AxisAngleToRot6D, Rot6DToAxisAngle
 from lerobot.teleoperators.metaquest.metaquest_rail.configuration_metaquest import MetaQuestRailConfig
 from lerobot.teleoperators.metaquest.metaquest_rail.metaquest import MetaQuestRail
-from lerobot.utils.control_utils import sanity_check_dataset_name, sanity_check_dataset_robot_compatibility, is_headless
+from lerobot.utils.control_utils import (
+    init_keyboard_listener,
+    is_headless,
+    sanity_check_dataset_name,
+    sanity_check_dataset_robot_compatibility,
+)
 from lerobot.utils.utils import log_say, init_logging, get_safe_torch_device
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 from lerobot.utils.constants import ACTION, OBS_STR
@@ -196,7 +201,6 @@ def record_loop(
             )
 
             act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
-            print(act_processed_policy)
 
         elif policy is None and isinstance(teleop, Teleoperator):
             act = teleop.get_action()
@@ -266,7 +270,7 @@ def record_loop(
 @dataclass
 class DatasetRecordConfig:
     # Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).
-    repo_id: str = "ar0s/eval_pick-turtle"
+    repo_id: str = "ar0s/pick-turtle-robotiq"
     # A short but accurate description of the task performed during the recording
     single_task: str = "Pick up the turtle and place it in the box"
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
@@ -274,11 +278,11 @@ class DatasetRecordConfig:
     # Limit the frames per second.
     fps: int = 10
     # Number of seconds for data recording for each episode.
-    episode_time_s: int | float = 60000
+    episode_time_s: int | float = 2000
     # Number of seconds for resetting the environment after each episode.
     reset_time_s: int | float = 0
     # Number of episodes to record.
-    num_episodes: int = 40
+    num_episodes: int = 2
     # Encode frames in the dataset into video
     video: bool = True
     # Upload dataset to Hugging Face hub.
@@ -315,20 +319,20 @@ class RecordConfig:
     robot: CustomManipulatorConfig = field(
         default_factory=lambda: CustomManipulatorConfig(
             arm=PandaConfig(),
-            gripper=PandaGripperConfig(),
+            gripper=RobotiqConfig(),
             cameras={
-                "wrist": RealSenseCameraConfig(serial_number_or_name="728612070403", use_depth=False, width=640, height=480, fps=30),
+                "wrist": RealSenseCameraConfig(serial_number_or_name="909522060544", use_depth=False, width=640, height=480, fps=30),
                 "left": RealSenseCameraConfig(serial_number_or_name="123622270882", use_depth=False, width=640, height=480, fps=30),
             }
         )
     )
-    policy: PreTrainedConfig | None = field(default_factory=PolicyConfig)
-    teleop: MetaQuestRailConfig =  None #field(default_factory=MetaQuestRailConfig) 
+    policy: PreTrainedConfig | None = None # field(default_factory=PolicyConfig)
+    teleop: MetaQuestRailConfig =  field(default_factory=MetaQuestRailConfig) 
     dataset: DatasetRecordConfig = field(default_factory=DatasetRecordConfig)
     
-    display_data: bool = False
+    display_data: bool = True
     play_sounds: bool = True
-    resume: bool = False
+    resume: bool = True
 
 
     def __post_init__(self):
@@ -438,12 +442,7 @@ def record(cfg: RecordConfig):
     if cfg.teleop is not None:
         teleop.connect()
 
-    events = {
-        "stop_recording": False,
-        "rerecord_episode": False,
-        "exit_early": False,
-    }
-    listener = None
+    listener, events = init_keyboard_listener()
     
     robot.reset()
 

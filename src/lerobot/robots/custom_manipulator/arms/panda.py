@@ -156,7 +156,7 @@ class Panda(Node):
 
     def reset(self):
         # Define home position
-        home_pos = np.array([0.0, 0.0, 0.0, -2, 0.0, 2, 0.7854])
+        home_pos = np.array([0.0, 0.0, 0.0, -2, 0.0, 2, 0.0])
         
         # Get current position
         request = Panda.interfaces['get_sensors'].Request()
