@@ -236,36 +236,43 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         import numpy as np
         import joblib
         import os
-        os.makedirs("LAST_TRAINING", exist_ok=True)
+        import matplotlib.pyplot as plt
+        from sklearn.preprocessing import StandardScaler
+        # Load features data
         hf_raw = dataset.hf_dataset.with_format(None)
-        # valid_indices = [
-        #     i for i, feat in enumerate(hf_raw["observation.videomae_feat"]) 
-        #     if feat is not None
-        # ]
-        features = np.array(hf_raw["observation.videomae_feat"])  # for i in valid_indices])
-        
+        features = np.array(hf_raw["observation.videomae_feat"])
         mask = ~np.isnan(features).any(axis=1)
         features = features[mask]
         
-        scaler = RobustScaler()
-        scaled_feats = scaler.fit_transform(features)
-        joblib.dump(scaler, "LAST_TRAINING/scaler.joblib")
-        pca = PCA(n_components=2, random_state=42)
-        denoised_feats = pca.fit_transform(scaled_feats)
+        # Rescale features based on their variance
+        variances = np.var(features, axis=0)
+        weights = (variances - np.min(variances)) / (np.max(variances) - np.min(variances) + 1e-9)
+        scaled_feats = features * weights
+        os.makedirs("LAST_TRAINING", exist_ok=True)
+        np.save("LAST_TRAINING/weights.npy", weights)
+
+        # Add them to observation frame
         colors = np.array(dataset.hf_dataset["episode_index"])[15:]
         last_zero_index = np.where(colors == 0)[0][-1]
-        colors = np.concatenate([colors[:last_zero_index], colors[last_zero_index+15:]])
-        import matplotlib.pyplot as plt
-        plt.scatter(denoised_feats[:, 0], denoised_feats[:, 1], c=colors, s=1)
-        plt.title("PCA of VideoMAE Features")
-        plt.savefig("LAST_TRAINING/PCA.png")
-        plt.close()
         dataset.hf_dataset = dataset.hf_dataset.remove_columns("observation.videomae_feat")
-        pad = np.zeros((15, scaled_feats.shape[-1]))
+        pad = np.zeros((15, features.shape[-1]))
         dataset.hf_dataset = dataset.hf_dataset.add_column(
             "observation.videomae_feat",
             list(np.concatenate([pad, scaled_feats[:last_zero_index], pad, scaled_feats[last_zero_index:]]))
         )
+
+        # Optional, visualization
+        scaler = StandardScaler()
+        scaled_feats = scaler.fit_transform(features)
+        joblib.dump(scaler, "LAST_TRAINING/scaler.joblib")
+        pca = PCA(n_components=2, random_state=42)
+        denoised_feats = pca.fit_transform(scaled_feats)
+
+        colors = np.concatenate([colors[:last_zero_index], colors[last_zero_index+15:]])
+        plt.scatter(denoised_feats[:, 0], denoised_feats[:, 1], c=colors, s=1)
+        plt.title("PCA of VideoMAE Features")
+        plt.savefig("LAST_TRAINING/PCA.png")
+        plt.close()
     # TODO DIRTY VIDOEMAE INTEGRATION END
 
     eval_env = None

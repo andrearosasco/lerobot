@@ -227,7 +227,7 @@ class RecordConfig:
     # Resume recording on an existing dataset.
     resume: bool = False
     # Compute VideoMAE features live during recording
-    compute_videomae_features_live: bool = False
+    compute_videomae_features_live: bool = True
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -301,7 +301,7 @@ def record_loop(
     single_task: str | None = None,
     display_data: bool = False,
     display_compressed_images: bool = False,
-    compute_videomae_features_live: bool = False,
+    compute_videomae_features_live: bool = True,
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -347,6 +347,13 @@ def record_loop(
         from collections import deque
         import torch
         import numpy as np
+        import cv2
+        import matplotlib.pyplot as plt
+        from sklearn.decomposition import PCA
+        from sklearn.preprocessing import RobustScaler
+        import joblib
+        import glob
+        
         MODEL_NAME = "OpenGVLab/VideoMAEv2-Base"
         DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
         vm_config = AutoConfig.from_pretrained(MODEL_NAME, trust_remote_code=True)
@@ -354,6 +361,89 @@ def record_loop(
         vm_model = AutoModel.from_pretrained(MODEL_NAME, config=vm_config, trust_remote_code=True).to(DEVICE)
         vm_model.eval()
         window = deque(maxlen=16)
+        
+        # # videomaetag - PCA Visualizer Class
+        class PCAVisualizer:
+            def __init__(self, pca, pca_points, labels, label_names):
+                print("Initializing PCA Visualizer...")
+                self.pca = pca  # Store PCA transformer for live inference
+                self.label_names = label_names  # Store names for legend
+                self.pad = 2.0
+                self.x_min, self.x_max = pca_points[:, 0].min() - self.pad, pca_points[:, 0].max() + self.pad
+                self.y_min, self.y_max = pca_points[:, 1].min() - self.pad, pca_points[:, 1].max() + self.pad
+                self.bg_img = self._create_bg(pca_points, labels)
+                self.bg_h, self.bg_w = self.bg_img.shape[:2]
+
+            def _create_bg(self, points, labels):
+                # Create a clean plot without axes
+                fig, ax = plt.subplots(figsize=(6, 6), dpi=100)
+                
+                # Use distinct colors: red and blue
+                colors = [(1.0, 0.0, 0.0), (0.0, 0.0, 1.0)]  # Red, Blue
+                
+                unique_labels = np.unique(labels)
+                for idx, label in enumerate(unique_labels):
+                    mask = labels == label
+                    color_idx = int(label) % len(colors)
+                    label_name = self.label_names[int(label)] if int(label) < len(self.label_names) else f'Source {int(label)}'
+                    ax.scatter(points[mask, 0], points[mask, 1], 
+                              c=[colors[color_idx]], s=3, alpha=0.5, label=label_name)
+                
+                ax.set_xlim(self.x_min, self.x_max)
+                ax.set_ylim(self.y_min, self.y_max)
+                ax.legend(loc='upper right', fontsize=8)
+                ax.axis('off')
+                fig.canvas.draw()
+                rgba_buffer = np.array(fig.canvas.renderer.buffer_rgba())
+                rgb_img = rgba_buffer[:, :, :3]
+                plt.close(fig)
+                return cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR)
+
+            def draw_query(self, q_denoised):
+                # Transform query to 2D PCA space
+                q_pca = self.pca.transform(q_denoised.reshape(1, -1))[0]
+                px = int((q_pca[0] - self.x_min) / (self.x_max - self.x_min) * self.bg_w)
+                py = int((q_pca[1] - self.y_max) / (self.y_min - self.y_max) * self.bg_h)
+                canvas = self.bg_img.copy()
+                cv2.circle(canvas, (px, py), 10, (255, 255, 255), -1)
+                cv2.circle(canvas, (px, py), 7, (0, 0, 255), -1)
+                return canvas
+        
+        # Load pre-computed features and scaler
+        FEATURES_DIR = "/home/sberti/metaCub/environments/ergoCinema/test/video_features"
+        SCALER_PATH = "/home/sberti/metaCub/environments/ergoCinema/test/scaler/GZ_scaler.joblib"
+        
+        print("Loading pre-computed features for PCA visualization...")
+        feature_files = glob.glob(f"{FEATURES_DIR}/*GZ*.npy")
+        all_feats = []
+        all_labels = []
+        label_names = []
+        
+        for file_idx, feat_file in enumerate(feature_files):
+            feat = np.load(feat_file)
+            # Extract clean name from filename (e.g., "shake.mp4.npy" -> "shake")
+            clean_name = feat_file.split('/')[-1].replace('.mp4.npy', '').replace('.npy', '')
+            label_names.append(clean_name)
+            all_feats.append(feat.squeeze())
+            all_labels.extend([file_idx] * len(feat.squeeze()))
+        
+        raw_feats = np.concatenate(all_feats, axis=0)
+        file_labels = np.array(all_labels)
+        file_labels = file_labels[~np.isnan(raw_feats).any(axis=1)]  # Ensure labels match the number of features
+        raw_feats = raw_feats[~np.isnan(raw_feats).any(axis=1)]
+        
+        # Load scaler and transform features
+        print(f"Loading RobustScaler from {SCALER_PATH}...")
+        vm_scaler = joblib.load(SCALER_PATH)
+        denoised_feats = vm_scaler.transform(raw_feats)
+        
+        # Fit PCA and create visualizer
+        print("Fitting PCA (2 components)...")
+        pca_viz = PCA(n_components=2, random_state=42)
+        feats_pca = pca_viz.fit_transform(denoised_feats)
+        
+        vm_viz = PCAVisualizer(pca_viz, feats_pca, file_labels, label_names)
+        print("✅ PCA Visualizer ready!")
     # # TODO END
 
     while timestamp < control_time_s:
@@ -376,6 +466,12 @@ def record_loop(
                 with torch.no_grad():
                     vm_features = vm_model(**inputs).squeeze()
                 obs["observation.videomae_feat"] = vm_features
+                # # videomaetag - PCA visualization
+                vm_features_np = vm_features.cpu().numpy().reshape(1, -1)
+                vm_features_scaled = vm_scaler.transform(vm_features_np)
+                pca_frame = vm_viz.draw_query(vm_features_scaled)
+                cv2.imshow('VideoMAE PCA Latent Space', pca_frame)
+                cv2.waitKey(1)
             else:
                 continue
         # # TODO END BAD VIDOEMAE INTEGRTATION
@@ -388,7 +484,7 @@ def record_loop(
 
         # # TODO FIX BAD INT START
         if compute_videomae_features_live:
-            observation_frame["observation.videomae_feat"] = vm_features.cpu().numpy()
+            observation_frame["observation.videomae_feat"] = vm_features_scaled[0]
         # # TODO END
 
         # Get action from either policy or teleop
@@ -445,6 +541,7 @@ def record_loop(
         if dataset is not None:
             action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
             frame = {**observation_frame, **action_frame, "task": single_task}
+            frame.pop("observation.videomae_feat")  # TODO REMOVE THIS IS VERY BAD LOL
             dataset.add_frame(frame)
 
         if display_data:
