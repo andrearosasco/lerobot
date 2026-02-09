@@ -2,9 +2,9 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "run-record-test",
+      "label": "clear-train",
       "type": "shell",
-      "command": "${workspaceFolder}/useful_scripts/record_test.sh",
+      "command": "rm -rf ${workspaceFolder}/checkpoints/test",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -19,7 +19,7 @@
     {
       "label": "clear-record",
       "type": "shell",
-      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/steb6/hri_real_3",
+      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/steb6/test",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -33,7 +33,7 @@
     {
       "label": "clear-test",
       "type": "shell",
-      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/steb6/eval_redballppp",
+      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/steb6/eval_test",
       "options": {
         "cwd": "${workspaceFolder}"
       },

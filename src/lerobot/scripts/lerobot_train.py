@@ -225,6 +225,56 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
+
+    # TODO DIRTY VIDOEMAE INTEGRTATION START
+    if cfg.use_videomae_features:
+        if not "observation.videomae_feat" in dataset.hf_dataset.column_names:
+            raise ValueError("use_videomae_features is set to True but the dataset does not contain the 'observation.videomae_feat' column. Please make sure your dataset has the VideoMAE features extracted and stored in a column named 'observation.videomae_feat'.")
+        logging.info("Processing VideoMAE features with principled approach")
+        from sklearn.preprocessing import RobustScaler
+        from sklearn.decomposition import PCA
+        import numpy as np
+        import joblib
+        import os
+        import matplotlib.pyplot as plt
+        from sklearn.preprocessing import StandardScaler
+        # Load features data
+        hf_raw = dataset.hf_dataset.with_format(None)
+        features = np.array(hf_raw["observation.videomae_feat"])
+        mask = ~np.isnan(features).any(axis=1)
+        features = features[mask]
+        
+        # Rescale features based on their variance
+        variances = np.var(features, axis=0)
+        weights = (variances - np.min(variances)) / (np.max(variances) - np.min(variances) + 1e-9)
+        scaled_feats = features * weights
+        os.makedirs("LAST_TRAINING", exist_ok=True)
+        np.save("LAST_TRAINING/weights.npy", weights)
+
+        # Add them to observation frame
+        colors = np.array(dataset.hf_dataset["episode_index"])[15:]
+        last_zero_index = np.where(colors == 0)[0][-1]
+        dataset.hf_dataset = dataset.hf_dataset.remove_columns("observation.videomae_feat")
+        pad = np.zeros((15, features.shape[-1]))
+        dataset.hf_dataset = dataset.hf_dataset.add_column(
+            "observation.videomae_feat",
+            list(np.concatenate([pad, scaled_feats[:last_zero_index], pad, scaled_feats[last_zero_index:]]))
+        )
+
+        # Optional, visualization
+        scaler = StandardScaler()
+        scaled_feats = scaler.fit_transform(features)
+        joblib.dump(scaler, "LAST_TRAINING/scaler.joblib")
+        pca = PCA(n_components=2, random_state=42)
+        denoised_feats = pca.fit_transform(scaled_feats)
+
+        colors = np.concatenate([colors[:last_zero_index], colors[last_zero_index+15:]])
+        plt.scatter(denoised_feats[:, 0], denoised_feats[:, 1], c=colors, s=1)
+        plt.title("PCA of VideoMAE Features")
+        plt.savefig("LAST_TRAINING/PCA.png")
+        plt.close()
+    # TODO DIRTY VIDOEMAE INTEGRATION END
+
     eval_env = None
     if cfg.eval_freq > 0 and cfg.env is not None and is_main_process:
         logging.info("Creating env")
@@ -408,7 +458,15 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
+        # TODO DIRTY VIDEOMAE INTEGRATION START
+        if "observation.videomae_feat" in batch:
+            tapullo = batch["observation.videomae_feat"]
+        # TODO DIRTY VIDEOMAE INTEGRATION END
         batch = preprocessor(batch)
+        # TODO DIRTY VIDEOMAE INTEGRATION START
+        if "observation.videomae_feat" in batch:
+            batch["observation.videomae_feat"] = tapullo
+        # TODO DIRTY VIDEOMAE INTEGRATION END
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
 

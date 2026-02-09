@@ -146,6 +146,7 @@ class ACTConfig(PreTrainedConfig):
     optimizer_lr: float = 1e-5
     optimizer_weight_decay: float = 1e-4
     optimizer_lr_backbone: float = 1e-5
+    use_videomae_features: bool = False  # Whether to use the pre-extracted VideoMAE features instead of raw images. This is only a flag that will be used to automatically set the observation keys in the policy and dataset configs, but it won't do any actual feature extraction. You need to make sure your dataset already has the VideoMAE features extracted and stored in a column named "observation.videomae_feat" for this to work.
 
     def __post_init__(self):
         super().__post_init__()
@@ -184,8 +185,9 @@ class ACTConfig(PreTrainedConfig):
         return None
 
     def validate_features(self) -> None:
-        if not self.image_features and not self.env_state_feature:
-            raise ValueError("You must provide at least one image or the environment state among the inputs.")
+        pass  # This pass allow to train with no images
+        # if not self.image_features and not self.env_state_feature:
+        #     raise ValueError("You must provide at least one image or the environment state among the inputs.")
 
     @property
     def observation_delta_indices(self) -> None:
