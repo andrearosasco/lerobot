@@ -90,10 +90,14 @@ def _normalize_list_columns(df: pd.DataFrame, features: dict[str, Any]) -> pd.Da
     return df
 
 
-def remove_finger_observations(old_repo_id, new_repo_id, local_dir):
+def remove_finger_observations(old_repo_id, new_repo_id, local_dir, revision=None):
     print(f"🚀 Caricamento dataset originale: {old_repo_id}")
-    dataset = LeRobotDataset(old_repo_id)
+    if revision is not None:
+        print(f"🔖 Usando revision: {revision}")
+    dataset = LeRobotDataset(old_repo_id, force_cache_sync=True, revision=revision)
     root = Path(dataset.root)
+    print(f"DATASET ROOT: {dataset.root}")
+    print("DATASET LENGTH:", len(dataset))
 
     info = _load_info(root)
     original_info = copy.deepcopy(info)
@@ -177,13 +181,19 @@ def remove_finger_observations(old_repo_id, new_repo_id, local_dir):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--old_repo", type=str, default="HSP-IIT/ergoPour_mergedV1")
-    parser.add_argument("--new_repo", type=str, default="HSP-IIT/ergoPour_mergedV2")
+    parser.add_argument("--old_repo", type=str, default="steb6/hri_ste_carmela")
+    parser.add_argument("--new_repo", type=str, default="steb6/hri_ste_carmela_no_fingers")
     parser.add_argument("--local_dir", type=str, default="data/clean_temp")
+    parser.add_argument(
+        "--revision",
+        type=str,
+        default="main",
+        help="HF revision/tag/commit to load (e.g. 'main' or 'v3.0')",
+    )
     args = parser.parse_args()
     
     # Auto-append no_fingers if new_repo equals old_repo
-    if args.new_repo == args.old_repo or args.new_repo == "HSP-IIT/ergoPour_mergedV1":
+    if args.new_repo == args.old_repo:
         args.new_repo = args.old_repo + "_no_fingers"
     
-    remove_finger_observations(args.old_repo, args.new_repo, args.local_dir)
+    remove_finger_observations(args.old_repo, args.new_repo, args.local_dir, args.revision)
