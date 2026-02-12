@@ -66,18 +66,21 @@ class MetaQuest(Teleoperator):
         self.cfg = cfg
         self.session_id = uuid.uuid4()
         self._is_connected = False
-        
+
+        # Optionally set finger rescale from config, default 1.0
+        self.finger_scale = getattr(cfg, 'finger_scale', 1.0)
+
         # Call parent constructor after setting cfg
         super().__init__(cfg)
 
         # Initialize YARP network
         yarp.Network.init()
-        
+
         # FrameTransform client will be created in connect() method
         self.tf_driver = None
         self.tf_reader = None
         self.matrix_buffer = yarp.Matrix(4, 4)
-        
+
         # Finger frame mappings for MetaQuest
         self.finger_index_pairs = [
             ("thumb_tip", 5),
@@ -212,15 +215,17 @@ class MetaQuest(Teleoperator):
         """Get raw finger poses from MetaQuest relative to hand frame."""
         hand_frame = f"openxr_{side}_hand_joint_palm"  # Reference frame (hand)
         positions = []
-        
+
         for finger_name, _ in self.finger_index_pairs:
             finger_frame = f"openxr_{side}_hand_joint_{finger_name}"
             transform = self._get_transform(finger_frame, hand_frame)
-            
+
             # Extract position from transformation matrix
             position = transform[:3, 3]
+            # do here the finger rescaling!!!
+            position = position * self.finger_scale
             positions.append(position)
-            
+
         return positions
 
     def get_action(self) -> dict[str, Any]:

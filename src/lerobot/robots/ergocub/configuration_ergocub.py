@@ -43,3 +43,4 @@ class ErgoCubConfig(RobotConfig):
     # Control mode: if True, actions are absolute targets (default, preserves behavior).
     # If False, actions are interpreted as deltas relative to the current/last target.
     absolute: bool = True
+    finger_scale: float = 1.0

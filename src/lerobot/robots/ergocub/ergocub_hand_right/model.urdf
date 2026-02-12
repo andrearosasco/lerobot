@@ -141,7 +141,7 @@
         <axis xyz="-1 0 0"/>
         <parent link="r_palm_base"/>
         <child link="r_ring1"/>
-        <limit lower="0" upper="1.5707963267948966" effort="4" velocity="4"/>
+        <limit lower="0" upper="1.2217" effort="4" velocity="4"/>
     </joint>
     <link name="r_ring1">
         <visual>
@@ -172,7 +172,7 @@
         <axis xyz="-1 0 0"/>
         <parent link="r_palm_base"/>
         <child link="r_pinkie1"/>
-        <limit lower="0" upper="1.5707963267948966" effort="4" velocity="4"/>
+        <limit lower="0" upper="1.2217" effort="4" velocity="4"/>
         <mimic joint="r_051ring1" multiplier="1" offset="0"/>
     </joint>
     <link name="r_pinkie1">

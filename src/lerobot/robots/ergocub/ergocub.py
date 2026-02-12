@@ -73,6 +73,7 @@ class ErgoCub(Robot):
             state_boards=config.state_boards,
             left_hand=config.left_hand,
             right_hand=config.right_hand,
+            finger_scale=config.finger_scale,
         )
 
     def connect(self, calibrate: bool = True):
@@ -96,7 +97,10 @@ class ErgoCub(Robot):
             logger.info("ErgoCub doesn't require calibration - skipping.")
             
         self.configure()
-        logger.info("%s connected.", self)
+        logger.info("%s connected. Going to reset...", self)
+
+        self.reset()
+
 
     def disconnect(self):
         """Disconnect from the robot and perform any necessary cleanup."""

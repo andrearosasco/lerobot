@@ -42,20 +42,22 @@
       "env": {
         "PYTHONPATH": "${workspaceFolder}/src"
       },
+      "python": "/home/ergocub/mambaforge/envs/lerobot/bin/python",
       "preLaunchTask": "clear-test",
       "args": [
         "--robot.type=ergocub",
-        "--robot.remote_prefix=/ergocubSim",
+        "--robot.remote_prefix=/ergocub",
         "--robot.local_prefix=/lerobot",
-        "--robot.cameras={ external: {\"type\": \"yarp\", \"yarp_name\": \"camera\", \"width\": 640, \"height\": 480, \"fps\": 30}, egocentric:{\"type\": \"yarp\", \"yarp_name\": \"ergocubSim/depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
-        "--robot.control_boards=[head,left_hand,right_hand,fingers]",
-        "--dataset.repo_id=steb6/eval_redballppp",
+        "--robot.cameras={ external: {\"type\": \"yarp\", \"yarp_name\": \"depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
+        "--robot.control_boards=[bimanual,head,fingers]",
+        "--robot.state_boards=[bimanual,head]",
+        "--dataset.repo_id=HSP-IIT/eval_test",
         "--dataset.fps=10",
-        "--policy.path=steb6/train-redball-act",
-        "--dataset.single_task=get the ball",
+        "--dataset.episode_time=1000",
+        "--dataset.num_episodes=1",
+        "--policy.path=steb6/groot-hri_ste_carmela_no_fingers",
+        "--dataset.single_task=interact with the human",
         "--dataset.reset_time=0",
-        "--dataset.episode_time=10",
-        "--dataset.fps=10"
       ]
     },
     {
@@ -104,7 +106,7 @@
       ]
     },
     {
-      "name": "Record",
+      "name": "Record (SIM)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_record.py",
@@ -117,10 +119,10 @@
         "--robot.type=ergocub",
         "--robot.remote_prefix=/ergocubSim",
         "--robot.local_prefix=/lerobot",
-        "--robot.cameras={egocentric:{\"type\": \"yarp\", \"yarp_name\": \"ergocubSim/depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
+        "--robot.cameras={egocentric:{\"type\": \"yarp\", \"yarp_name\": \"depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
         "--robot.control_boards=[head,left_hand,right_hand,fingers,torso]",
         "--teleop.type=metaquest",
-        "--dataset.repo_id=steb6/test2",
+        "--dataset.repo_id=steb6/test",
         "--dataset.num_episodes=1",
         "--dataset.fps=10",
         "--dataset.reset_time=1",
@@ -153,20 +155,21 @@
       "env": {
         "PYTHONPATH": "${workspaceFolder}/src"
       },
-      // "preLaunchTask": "clear-record",
+      "preLaunchTask": "clear-record",
       "args": [
         "--robot.type=ergocub",
         "--robot.remote_prefix=/ergocub",
         "--robot.local_prefix=/lerobot",
-        "--robot.cameras={ external: {\"type\": \"yarp\", \"yarp_name\": \"depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
-        "--robot.control_boards=[head,left_hand,right_hand,fingers,torso]",
+        "--robot.cameras={ egocentric: {\"type\": \"yarp\", \"yarp_name\": \"depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
+        "--robot.control_boards=[head,bimanual]",
+        "--robot.state_boards=[head,bimanual]",
         "--teleop.type=metaquest",
-        "--dataset.repo_id=steb6/hri_real_3",
+        "--dataset.repo_id=steb6/IROS_HANDOVER",
         "--dataset.num_episodes=1",
         "--dataset.fps=10",
-        "--dataset.reset_time=3",
-        "--dataset.episode_time=300",
-        "--dataset.single_task=interact with the human",
+        "--dataset.reset_time=0",
+        "--dataset.episode_time=120",
+        "--dataset.single_task=handover",
         "--resume=true"
       ]
     }

@@ -38,3 +38,4 @@ class MetaQuestConfig(TeleoperatorConfig):
     control_boards: List[str] = field(
         default_factory=lambda: ["head", "left_hand", "right_hand", "left_fingers", "right_fingers"]
     )
+    finger_scale: float = 1.0
