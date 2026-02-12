@@ -63,6 +63,9 @@ class GrootConfig(PreTrainedConfig):
     # Embodiment tag to use for training (e.g. 'new_embodiment', 'gr1')
     embodiment_tag: str = "new_embodiment"
 
+    # Whether to use text input (task description) for GR00T
+    use_text: bool = True
+
     # Fine-tuning control arguments
 
     # Whether to fine-tune the llm backbone
