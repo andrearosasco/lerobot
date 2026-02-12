@@ -53,16 +53,16 @@ CMD=(
     --dataset.repo_id="$DATASET"
     --policy.device="$DEVICE"
     --output_dir="checkpoints/$OUTPUT"
-    --image_crop_params='{"observation.images.egocentric": [0, 80, 480, 480]}' 
-	--image_resize_size="[256,256]"
+    # --image_crop_params='{"observation.images.egocentric": [0, 80, 480, 480]}' 
+	# --image_resize_size="[256,256]"
     --dataset.image_transforms.enable=true
-    --dataset.image_transforms.max_num_transforms=3
-    --dataset.image_transforms.random_order=true
-    --dataset.image_transforms.tfs='''{"brightness": {"weight": 1.0, "type": "ColorJitter", "kwargs": {"brightness": [0.8, 1.2]}}, 
-                                       "contrast": {"weight": 1.0, "type": "ColorJitter", "kwargs": {"contrast": [0.8, 1.2]}}, 
-                                       "saturation": {"weight": 1.0, "type": "ColorJitter", "kwargs": {"saturation": [0.5, 1.5]}}, 
-                                       "hue": {"weight": 1.0, "type": "ColorJitter", "kwargs": {"hue": [-0.05, 0.05]}}, 
-                                       "sharpness": {"weight": 1.0, "type": "SharpnessJitter", "kwargs": {"sharpness": [0.5, 1.5]}}}'''
+    # --dataset.image_transforms.max_num_transforms=3
+    # --dataset.image_transforms.random_order=true
+    # --dataset.image_transforms.tfs='''{"brightness": {"weight": 1.0, "type": "ColorJitter", "kwargs": {"brightness": [0.8, 1.2]}}, 
+    #                                    "contrast": {"weight": 1.0, "type": "ColorJitter", "kwargs": {"contrast": [0.8, 1.2]}}, 
+    #                                    "saturation": {"weight": 1.0, "type": "ColorJitter", "kwargs": {"saturation": [0.5, 1.5]}}, 
+    #                                    "hue": {"weight": 1.0, "type": "ColorJitter", "kwargs": {"hue": [-0.05, 0.05]}}, 
+    #                                    "sharpness": {"weight": 1.0, "type": "SharpnessJitter", "kwargs": {"sharpness": [0.5, 1.5]}}}'''
                                     #    "green_screen_replace": {"weight": -1.0, "type": "GreenScreenReplace", "kwargs": {"pool_dir": "./gs_image_pool", "green_ratio": 0.001, "min_green": 0.001, "spill": 0.001, "hue_min": 0.1, "hue_max": 0.50, "min_s": 0.10, "min_v": 0.10}}}'''
 )
 
@@ -75,8 +75,8 @@ case $POLICY in
         CMD+=(
             --policy.chunk_size=16
             --policy.n_action_steps=16
-            --policy.max_action_dim=36
-            --policy.base_model_path=steb6/GR00T-N1.5-3B-head36
+            # --policy.max_action_dim=36
+            # --policy.base_model_path=steb6/GR00T-N1.5-3B-head36
         )
         ;;
     pi0)  # inference every 0.5 seconds at 10 fps
