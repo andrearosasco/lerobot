@@ -146,5 +146,6 @@ class ErgoCubMotorsBus:
     def reset(self) -> None:
         self.controllers['bimanual'].reset()
         self.controllers['head'].reset()
-        self.controllers['fingers'].reset()
+        if "fingers" in self.controllers:
+            self.controllers['fingers'].reset()
         time.sleep(5)  # Allow some time for reset to take effect
