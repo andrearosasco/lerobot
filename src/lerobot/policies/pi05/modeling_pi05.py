@@ -785,23 +785,21 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         masks,
         noise=None,
         num_steps=None,
+        compute_densities: bool = False,
+        hutchinson_samples: int = 1,
         **kwargs: Unpack[ActionSelectKwargs],
     ) -> Tensor:
         """Do a full inference forward and compute the action."""
         if num_steps is None:
             num_steps = self.config.num_inference_steps
 
-        bsize = tokens.shape[0]
+        n_action_samples = self.config.density_population_size if compute_densities else 1
+        batch_size = tokens.shape[0]
         device = tokens.device
+        bsize = batch_size * n_action_samples
 
         if noise is None:
-            # Sample noise with padded dimension as expected by action_in_proj
-            actions_shape = (
-                bsize,
-                self.config.chunk_size,
-                self.config.max_action_dim,
-            )  # Use config max_action_dim for internal processing
-            noise = self.sample_noise(actions_shape, device)
+            noise = self.sample_noise((bsize, self.config.chunk_size, self.config.max_action_dim), device)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
@@ -818,43 +816,100 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             use_cache=True,
         )
 
+        if n_action_samples > 1:
+            prefix_pad_masks = prefix_pad_masks.repeat_interleave(n_action_samples, dim=0)
+            if hasattr(past_key_values, "batch_repeat_interleave"):
+                repeated = past_key_values.batch_repeat_interleave(n_action_samples)
+                past_key_values = repeated if repeated is not None else past_key_values
+            else:
+                past_key_values = tuple(
+                    tuple(t.repeat_interleave(n_action_samples, dim=0) for t in layer)
+                    for layer in past_key_values
+                )
         dt = -1.0 / num_steps
 
         x_t = noise
-        for step in range(num_steps):
-            time = 1.0 + step * dt
-            time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
+        if not compute_densities:
+            self._last_population_logp = None
+            for step in range(num_steps):
+                time = 1.0 + step * dt
+                time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
 
-            def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
-                return self.denoise_step(
-                    prefix_pad_masks=prefix_pad_masks,
-                    past_key_values=past_key_values,
-                    x_t=input_x_t,
-                    timestep=current_timestep,
-                )
+                def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
+                    return self.denoise_step(
+                        prefix_pad_masks=prefix_pad_masks,
+                        past_key_values=past_key_values,
+                        x_t=input_x_t,
+                        timestep=current_timestep,
+                    )
 
-            if self._rtc_enabled():
-                inference_delay = kwargs.get("inference_delay")
-                prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
-                execution_horizon = kwargs.get("execution_horizon")
+                if self._rtc_enabled():
+                    inference_delay = kwargs.get("inference_delay")
+                    prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
+                    execution_horizon = kwargs.get("execution_horizon")
 
-                v_t = self.rtc_processor.denoise_step(
-                    x_t=x_t,
-                    prev_chunk_left_over=prev_chunk_left_over,
-                    inference_delay=inference_delay,
-                    time=time,
-                    original_denoise_step_partial=denoise_step_partial_call,
-                    execution_horizon=execution_horizon,
-                )
-            else:
-                v_t = denoise_step_partial_call(x_t)
+                    v_t = self.rtc_processor.denoise_step(
+                        x_t=x_t,
+                        prev_chunk_left_over=prev_chunk_left_over,
+                        inference_delay=inference_delay,
+                        time=time,
+                        original_denoise_step_partial=denoise_step_partial_call,
+                        execution_horizon=execution_horizon,
+                    )
+                else:
+                    v_t = denoise_step_partial_call(x_t)
 
-            x_t = x_t + dt * v_t
+                x_t = x_t + dt * v_t
 
-            if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
-                self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
+                if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
+                    self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
+        else:
+            assert not self._rtc_enabled(), "RTC breaks differentiability needed for density estimation"
+            log2pi = math.log(2 * math.pi)
+            logp = (-0.5 * (x_t.square() + log2pi)).sum(dim=(1, 2))
+            fork_devices = (
+                [device.index] if device.type == "cuda" and device.index is not None else None
+            )
+            for step in range(num_steps):
+                time = 1.0 + step * dt
+                time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
 
-        return x_t
+                with torch.enable_grad():
+                    x_in = x_t.detach().requires_grad_(True)
+                    v_t = self.denoise_step(
+                        prefix_pad_masks=prefix_pad_masks,
+                        past_key_values=past_key_values,
+                        x_t=x_in,
+                        timestep=time_tensor,
+                    )
+                    with torch.random.fork_rng(devices=fork_devices):
+                        div = 0.0
+                        for k in range(hutchinson_samples):
+                            e = (
+                                torch.randint(0, 2, v_t.shape, device=v_t.device, dtype=torch.int8)
+                                .to(v_t.dtype)
+                                * 2
+                                - 1
+                            )
+                            ev = (e * v_t).sum(dim=(1, 2))
+                            g = torch.autograd.grad(
+                                ev,
+                                x_in,
+                                torch.ones_like(ev),
+                                create_graph=False,
+                                retain_graph=(k < hutchinson_samples - 1),
+                            )[0]
+                            div = div + (g * e).sum(dim=(1, 2))
+                        div = div / float(hutchinson_samples)
+
+                logp = logp - div * dt
+                x_t = (x_in + dt * v_t).detach()
+
+            self._last_population_logp = logp.reshape(batch_size, n_action_samples)
+
+        population = x_t.reshape(batch_size, n_action_samples, self.config.chunk_size, self.config.max_action_dim)
+        self._last_population = population
+        return population[:, 0]
 
     def denoise_step(
         self,
@@ -1134,63 +1189,54 @@ class PI05Policy(PreTrainedPolicy):
         Images from LeRobot are typically in [B, C, H, W] format and normalized to [0, 1].
         PaliGemma expects images in [B, C, H, W] format and normalized to [-1, 1].
         """
-        images = []
-        img_masks = []
+        images: list[Tensor] = []
+        img_masks: list[Tensor] = []
 
         # Get device from model parameters
         device = next(self.parameters()).device
 
-        present_img_keys = [key for key in self.config.image_features if key in batch]
-        missing_img_keys = [key for key in self.config.image_features if key not in batch]
-
-        if len(present_img_keys) == 0:
+        expected_img_keys = list(self.config.image_features)
+        if not any(key in batch for key in expected_img_keys):
             raise ValueError(
                 f"All image features are missing from the batch. At least one expected. "
                 f"(batch: {batch.keys()}) (image_features: {self.config.image_features})"
             )
 
-        # Preprocess image features present in the batch
-        for key in present_img_keys:
+        batch_size = next(batch[key] for key in expected_img_keys if key in batch).shape[0]
+
+        for key in expected_img_keys:
+            if key not in batch:
+                img = torch.full(
+                    (batch_size, 3, *self.config.image_resolution),
+                    -1.0,
+                    device=device,
+                    dtype=torch.float32,
+                )
+                images.append(img)
+                img_masks.append(torch.zeros(batch_size, dtype=torch.bool, device=device))
+                continue
+
             img = batch[key]
 
-            # Ensure tensor is on the same device as the model
             if img.device != device:
                 img = img.to(device)
-
-            # Ensure float32 dtype for consistency
             if img.dtype != torch.float32:
                 img = img.to(torch.float32)
 
-            # from openpi preprocess_observation_pytorch: Handle both [B, C, H, W] and [B, H, W, C] formats
-            is_channels_first = img.shape[1] == 3  # Check if channels are in dimension 1
-
+            is_channels_first = img.shape[1] == 3
             if is_channels_first:
-                # Convert [B, C, H, W] to [B, H, W, C] for processing
                 img = img.permute(0, 2, 3, 1)
 
-            # from openpi preprocess_observation_pytorch: Resize with padding if needed
             if img.shape[1:3] != self.config.image_resolution:
                 img = resize_with_pad_torch(img, *self.config.image_resolution)
 
-            # Normalize from [0,1] to [-1,1] as expected by siglip
             img = img * 2.0 - 1.0
 
-            # from openpi preprocess_observation_pytorch: Convert back to [B, C, H, W] format if it was originally channels-first
             if is_channels_first:
-                img = img.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
+                img = img.permute(0, 3, 1, 2)
 
             images.append(img)
-            # Create mask (all ones for real images)
-            bsize = img.shape[0]
-            mask = torch.ones(bsize, dtype=torch.bool, device=device)
-            img_masks.append(mask)
-
-        # Create image features not present in the batch as fully 0 padded images
-        for _num_empty_cameras in range(len(missing_img_keys)):
-            img = torch.ones_like(img) * -1  # Padded with -1 for SigLIP
-            mask = torch.zeros_like(mask)  # Mask is zero for empty cameras
-            images.append(img)
-            img_masks.append(mask)
+            img_masks.append(torch.ones(batch_size, dtype=torch.bool, device=device))
 
         return images, img_masks
 

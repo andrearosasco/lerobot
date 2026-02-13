@@ -56,6 +56,12 @@ class EvalConfig:
     batch_size: int = 50
     # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
     use_async_envs: bool = False
+    # If enabled, eval uses density-aware action selection for policies that support it.
+    compute_density: bool = False
+    # Number of Hutchinson probes used for divergence estimation when `compute_density` is enabled.
+    density_hutchinson_samples: int = 1
+    # Blend factor for a red observation tint applied during eval (0.0 disables, 1.0 is full red).
+    observation_red_tint_strength: float = 0.0
 
     def __post_init__(self) -> None:
         if self.batch_size > self.n_episodes:

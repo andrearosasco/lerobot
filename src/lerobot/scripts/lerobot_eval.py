@@ -51,7 +51,7 @@ import json
 import logging
 import threading
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Callable
 from contextlib import nullcontext
 from copy import deepcopy
@@ -81,7 +81,7 @@ from lerobot.envs.utils import (
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
-from lerobot.utils.constants import ACTION, DONE, OBS_STR, REWARD
+from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
@@ -102,6 +102,9 @@ def rollout(
     seeds: list[int] | None = None,
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
+    compute_density: bool = False,
+    density_hutchinson_samples: int = 1,
+    observation_red_tint_strength: float = 0.0,
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -147,6 +150,9 @@ def rollout(
     all_rewards = []
     all_successes = []
     all_dones = []
+    all_densities = []
+    action_queue = deque()
+    density_queue = deque()
 
     step = 0
     # Keep track of which environments are done.
@@ -159,9 +165,20 @@ def rollout(
         leave=False,
     )
     check_env_attributes_and_types(env)
+    tint_keep_ratio = 1.0 - observation_red_tint_strength
+
+    def apply_observation_red_tint(obs: dict[str, Tensor]) -> None:
+        if observation_red_tint_strength <= 0:
+            return
+        for key, value in obs.items():
+            if (key == OBS_IMAGE or key.startswith(f"{OBS_IMAGES}.")) and isinstance(value, Tensor):
+                value[:, 0].mul_(tint_keep_ratio).add_(observation_red_tint_strength)
+                value[:, 1:].mul_(tint_keep_ratio)
+
     while not np.all(done) and step < max_steps:
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
         observation = preprocess_observation(observation)
+        apply_observation_red_tint(observation)
         if return_observations:
             all_observations.append(deepcopy(observation))
 
@@ -172,8 +189,29 @@ def rollout(
         observation = env_preprocessor(observation)
 
         observation = preprocessor(observation)
-        with torch.inference_mode():
-            action = policy.select_action(observation)
+        del observation['observation.images.image']
+        if compute_density:
+            if len(action_queue) == 0:
+                policy.predict_action_chunk(
+                    observation,
+                    compute_densities=True,
+                    hutchinson_samples=density_hutchinson_samples,
+                )
+                pop = policy.model._last_population
+                pop_logp = policy.model._last_population_logp
+                idx = torch.argmax(pop_logp, dim=1)
+                batch_idx = torch.arange(pop.shape[0], device=idx.device)
+                act_dim = policy.config.output_features[ACTION].shape[0]
+                best = pop[batch_idx, idx, : policy.config.n_action_steps, :act_dim]
+                best_logp_per_step = pop_logp[batch_idx, idx] / policy.config.n_action_steps
+                action_queue.extend(best.transpose(0, 1))
+                density_queue.extend(best_logp_per_step for _ in range(policy.config.n_action_steps))
+
+            action = action_queue.popleft()
+            all_densities.append(density_queue.popleft().detach().cpu())
+        else:
+            with torch.inference_mode():
+                action = policy.select_action(observation)
         action = postprocessor(action)
 
         action_transition = {ACTION: action}
@@ -225,6 +263,7 @@ def rollout(
     # Track the final observation.
     if return_observations:
         observation = preprocess_observation(observation)
+        apply_observation_red_tint(observation)
         all_observations.append(deepcopy(observation))
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
@@ -234,6 +273,8 @@ def rollout(
         "success": torch.stack(all_successes, dim=1),
         "done": torch.stack(all_dones, dim=1),
     }
+    if compute_density:
+        ret["density"] = torch.stack(all_densities, dim=1)
     if return_observations:
         stacked_observations = {}
         for key in all_observations[0]:
@@ -258,6 +299,9 @@ def eval_policy(
     videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
+    compute_density: bool = False,
+    density_hutchinson_samples: int = 1,
+    observation_red_tint_strength: float = 0.0,
 ) -> dict:
     """
     Args:
@@ -300,8 +344,12 @@ def eval_policy(
     max_rewards = []
     all_successes = []
     all_seeds = []
+    all_done_indices = []
+    all_n_steps = []
+    all_log_density_per_step = []
     threads = []  # for video saving threads
     n_episodes_rendered = 0  # for saving the correct number of videos
+    tint_keep_ratio = 1.0 - observation_red_tint_strength
 
     # Callback for visualization.
     def render_frame(env: gym.vector.VectorEnv):
@@ -310,10 +358,20 @@ def eval_policy(
             return
         n_to_render_now = min(max_episodes_rendered - n_episodes_rendered, env.num_envs)
         if isinstance(env, gym.vector.SyncVectorEnv):
-            ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
+            frames = np.stack([env.envs[i].render() for i in range(n_to_render_now)])  # noqa: B023
         elif isinstance(env, gym.vector.AsyncVectorEnv):
             # Here we must render all frames and discard any we don't need.
-            ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
+            frames = np.stack(env.call("render")[:n_to_render_now])
+        else:
+            return
+
+        if observation_red_tint_strength > 0:
+            frames = frames.astype(np.float32, copy=False)
+            frames[..., 0] = frames[..., 0] * tint_keep_ratio + 255.0 * observation_red_tint_strength
+            if frames.shape[-1] > 1:
+                frames[..., 1:] *= tint_keep_ratio
+            frames = np.clip(frames, 0, 255).astype(np.uint8)
+        ep_frames.append(frames)
 
     if max_episodes_rendered > 0:
         video_paths: list[str] = []
@@ -345,6 +403,9 @@ def eval_policy(
             seeds=list(seeds) if seeds else None,
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
+            compute_density=compute_density,
+            density_hutchinson_samples=density_hutchinson_samples,
+            observation_red_tint_strength=observation_red_tint_strength,
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
@@ -355,7 +416,7 @@ def eval_policy(
 
         # Make a mask with shape (batch, n_steps) to mask out rollout data after the first done
         # (batch-element-wise). Note the `done_indices + 1` to make sure to keep the data from the done step.
-        mask = (torch.arange(n_steps) <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)).int()
+        mask = (torch.arange(n_steps) < einops.repeat(done_indices + 1, "b -> b s", s=n_steps)).int()
         # Extend metrics.
         batch_sum_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "sum")
         sum_rewards.extend(batch_sum_rewards.tolist())
@@ -363,6 +424,15 @@ def eval_policy(
         max_rewards.extend(batch_max_rewards.tolist())
         batch_successes = einops.reduce((rollout_data["success"] * mask), "b n -> b", "any")
         all_successes.extend(batch_successes.tolist())
+        if compute_density:
+            batch_done_indices = done_indices.tolist()
+            batch_n_steps = (done_indices + 1).tolist()
+            all_done_indices.extend(batch_done_indices)
+            all_n_steps.extend(batch_n_steps)
+
+            # rollout_data["density"] is a per-step log-density (log space).
+            for ep_ix, done_index in enumerate(batch_done_indices):
+                all_log_density_per_step.append(rollout_data["density"][ep_ix, : done_index + 1].tolist())
         if seeds:
             all_seeds.extend(seeds)
         else:
@@ -419,33 +489,38 @@ def eval_policy(
         thread.join()
 
     # Compile eval info.
-    info = {
-        "per_episode": [
-            {
-                "episode_ix": i,
-                "sum_reward": sum_reward,
-                "max_reward": max_reward,
-                "success": success,
-                "seed": seed,
-            }
-            for i, (sum_reward, max_reward, success, seed) in enumerate(
-                zip(
-                    sum_rewards[:n_episodes],
-                    max_rewards[:n_episodes],
-                    all_successes[:n_episodes],
-                    all_seeds[:n_episodes],
-                    strict=True,
-                )
-            )
-        ],
-        "aggregated": {
-            "avg_sum_reward": float(np.nanmean(sum_rewards[:n_episodes])),
-            "avg_max_reward": float(np.nanmean(max_rewards[:n_episodes])),
-            "pc_success": float(np.nanmean(all_successes[:n_episodes]) * 100),
-            "eval_s": time.time() - start,
-            "eval_ep_s": (time.time() - start) / n_episodes,
-        },
+    per_episode = []
+    for i, (sum_reward, max_reward, success, seed) in enumerate(
+        zip(
+            sum_rewards[:n_episodes],
+            max_rewards[:n_episodes],
+            all_successes[:n_episodes],
+            all_seeds[:n_episodes],
+            strict=True,
+        )
+    ):
+        ep_info = {
+            "episode_ix": i,
+            "sum_reward": sum_reward,
+            "max_reward": max_reward,
+            "success": success,
+            "seed": seed,
+        }
+        if compute_density:
+            ep_info["done_index"] = all_done_indices[i]
+            ep_info["n_steps"] = all_n_steps[i]
+            ep_info["log_density_per_step"] = all_log_density_per_step[i]
+        per_episode.append(ep_info)
+
+    aggregated = {
+        "avg_sum_reward": float(np.nanmean(sum_rewards[:n_episodes])),
+        "avg_max_reward": float(np.nanmean(max_rewards[:n_episodes])),
+        "pc_success": float(np.nanmean(all_successes[:n_episodes]) * 100),
+        "eval_s": time.time() - start,
+        "eval_ep_s": (time.time() - start) / n_episodes,
     }
+
+    info = {"per_episode": per_episode, "aggregated": aggregated}
 
     if return_episode_data:
         info["episodes"] = episode_data
@@ -561,6 +636,9 @@ def eval_main(cfg: EvalPipelineConfig):
             videos_dir=Path(cfg.output_dir) / "videos",
             start_seed=cfg.seed,
             max_parallel_tasks=cfg.env.max_parallel_tasks,
+            compute_density=cfg.eval.compute_density,
+            density_hutchinson_samples=cfg.eval.density_hutchinson_samples,
+            observation_red_tint_strength=cfg.eval.observation_red_tint_strength,
         )
         print("Overall Aggregated Metrics:")
         print(info["overall"])
@@ -582,11 +660,14 @@ def eval_main(cfg: EvalPipelineConfig):
 
 
 # ---- typed payload returned by one task eval ----
-class TaskMetrics(TypedDict):
+class TaskMetrics(TypedDict, total=False):
     sum_rewards: list[float]
     max_rewards: list[float]
     successes: list[bool]
     video_paths: list[str]
+    done_indices: list[int]
+    n_steps: list[int]
+    log_density_per_step: list[list[float]]
 
 
 ACC_KEYS = ("sum_rewards", "max_rewards", "successes", "video_paths")
@@ -605,6 +686,9 @@ def eval_one(
     videos_dir: Path | None,
     return_episode_data: bool,
     start_seed: int | None,
+    compute_density: bool,
+    density_hutchinson_samples: int,
+    observation_red_tint_strength: float = 0.0,
 ) -> TaskMetrics:
     """Evaluates one task_id of one suite using the provided vec env."""
 
@@ -622,15 +706,23 @@ def eval_one(
         videos_dir=task_videos_dir,
         return_episode_data=return_episode_data,
         start_seed=start_seed,
+        compute_density=compute_density,
+        density_hutchinson_samples=density_hutchinson_samples,
+        observation_red_tint_strength=observation_red_tint_strength,
     )
 
     per_episode = task_result["per_episode"]
-    return TaskMetrics(
+    metrics = TaskMetrics(
         sum_rewards=[ep["sum_reward"] for ep in per_episode],
         max_rewards=[ep["max_reward"] for ep in per_episode],
         successes=[ep["success"] for ep in per_episode],
         video_paths=task_result.get("video_paths", []),
     )
+    if compute_density:
+        metrics["done_indices"] = [ep["done_index"] for ep in per_episode]
+        metrics["n_steps"] = [ep["n_steps"] for ep in per_episode]
+        metrics["log_density_per_step"] = [ep["log_density_per_step"] for ep in per_episode]
+    return metrics
 
 
 def run_one(
@@ -648,6 +740,9 @@ def run_one(
     videos_dir: Path | None,
     return_episode_data: bool,
     start_seed: int | None,
+    compute_density: bool,
+    density_hutchinson_samples: int,
+    observation_red_tint_strength: float = 0.0,
 ):
     """
     Run eval_one for a single (task_group, task_id, env).
@@ -673,6 +768,9 @@ def run_one(
         videos_dir=task_videos_dir,
         return_episode_data=return_episode_data,
         start_seed=start_seed,
+        compute_density=compute_density,
+        density_hutchinson_samples=density_hutchinson_samples,
+        observation_red_tint_strength=observation_red_tint_strength,
     )
     # ensure we always provide video_paths key to simplify accumulation
     if max_episodes_rendered > 0:
@@ -694,6 +792,9 @@ def eval_policy_all(
     return_episode_data: bool = False,
     start_seed: int | None = None,
     max_parallel_tasks: int = 1,
+    compute_density: bool = False,
+    density_hutchinson_samples: int = 1,
+    observation_red_tint_strength: float = 0.0,
 ) -> dict:
     """
     Evaluate a nested `envs` dict: {task_group: {task_id: vec_env}}.
@@ -749,6 +850,9 @@ def eval_policy_all(
         videos_dir=videos_dir,
         return_episode_data=return_episode_data,
         start_seed=start_seed,
+        compute_density=compute_density,
+        density_hutchinson_samples=density_hutchinson_samples,
+        observation_red_tint_strength=observation_red_tint_strength,
     )
 
     if max_parallel_tasks <= 1:
@@ -786,13 +890,14 @@ def eval_policy_all(
     # compute per-group aggregates
     groups_aggregated = {}
     for group, acc in group_acc.items():
-        groups_aggregated[group] = {
+        group_metrics = {
             "avg_sum_reward": _agg_from_list(acc["sum_rewards"]),
             "avg_max_reward": _agg_from_list(acc["max_rewards"]),
             "pc_success": _agg_from_list(acc["successes"]) * 100 if acc["successes"] else float("nan"),
             "n_episodes": len(acc["sum_rewards"]),
             "video_paths": list(acc["video_paths"]),
         }
+        groups_aggregated[group] = group_metrics
 
     # overall aggregates
     overall_agg = {
