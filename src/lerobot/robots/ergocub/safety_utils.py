@@ -112,23 +112,29 @@ class HandSafetyChecker:
                 logger.debug("Invalid target position for %s arm: all zeros or NaN values", side)
                 return False
             
+            # Get current position from state dict
+            current_pos = np.array([
+                current_state[f"{side}_hand.position.x"],
+                current_state[f"{side}_hand.position.y"],
+                current_state[f"{side}_hand.position.z"]
+            ])
+            
+            # Calculate position error
+            position_error = target_pos - current_pos
+            max_error = np.max(np.abs(position_error))
+            
             if not self.is_arm_controlled[side]:
-                # Get current position from state dict
-                current_pos = np.array([
-                    current_state[f"{side}_hand.position.x"],
-                    current_state[f"{side}_hand.position.y"],
-                    current_state[f"{side}_hand.position.z"]
-                ])
-                
-                # Calculate position error
-                position_error = target_pos - current_pos
-                max_error = np.max(np.abs(position_error))
-                
+                # the arm is not yet controlled, check if the target position is within the tolerance of the current position
                 if max_error < self.position_tolerance:
                     self.is_arm_controlled[side] = True
                     print(f"{side.capitalize()} arm is now controlled (error: {max_error:.3f}m < {self.position_tolerance:.3f}m)")
                 else:
                     print(f"{side.capitalize()} arm not ready: position error {max_error:.3f}m > {self.position_tolerance:.3f}m")
+            else:
+                # the arm was controlled, disable it if the target gets too far
+                if max_error > self.position_tolerance*3:
+                    self.is_arm_controlled[side] = False
+                    print(f"{side.capitalize()} arm disabled: position error {max_error:.3f}m > {self.position_tolerance:.3f}m")
 
         # Only move if all configured arms are controlled
         controlled_arms = [side for side in arms_to_check if self.is_arm_controlled[side]]
