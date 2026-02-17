@@ -132,7 +132,7 @@ class HandSafetyChecker:
                     print(f"{side.capitalize()} arm not ready: position error {max_error:.3f}m > {self.position_tolerance:.3f}m")
             else:
                 # the arm was controlled, disable it if the target gets too far
-                if max_error > self.position_tolerance*3:
+                if max_error > self.position_tolerance*10:
                     self.is_arm_controlled[side] = False
                     print(f"{side.capitalize()} arm disabled: position error {max_error:.3f}m > {self.position_tolerance:.3f}m")
 

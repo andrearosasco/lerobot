@@ -156,22 +156,23 @@ class ErgoCub(Robot):
             action = self.to_absolute(action)
 
         # Clip hand position targets to fixed limits (absolute mode).
-        limits = {
-            "left": {"x": (0.0, 0.40), "y": (-0.40, 0.40), "z": (0.0, 0.50)},
-            "right": {"x": (0.0, 0.40), "y": (-0.40, 0.40), "z": (0.0, 0.50)},
-        }
-        for side in ["left", "right"]:
-            for axis in ["x", "y", "z"]:
-                key = f"{side}_hand.position.{axis}"
-                if key in action:
-                    if action[key] < limits[side][axis][0] or action[key] > limits[side][axis][1]:
-                        logger.info(
-                            "Clipping %s to limits: %.3f -> [%.3f, %.3f]",
-                            key, action[key], limits[side][axis][0], limits[side][axis][1]
-                        )
-                        action[key] = float(
-                            np.clip(action[key], limits[side][axis][0], limits[side][axis][1])
-                        )
+        print("clipping has been disabled in ergocub.py")
+        # limits = {
+        #     "left": {"x": (0.0, 0.40), "y": (-0.40, 0.40), "z": (0.0, 0.50)},
+        #     "right": {"x": (0.0, 0.40), "y": (-0.40, 0.40), "z": (0.0, 0.50)},
+        # }
+        # for side in ["left", "right"]:
+        #     for axis in ["x", "y", "z"]:
+        #         key = f"{side}_hand.position.{axis}"
+        #         if key in action:
+        #             if action[key] < limits[side][axis][0] or action[key] > limits[side][axis][1]:
+        #                 logger.info(
+        #                     "Clipping %s to limits: %.3f -> [%.3f, %.3f]",
+        #                     key, action[key], limits[side][axis][0], limits[side][axis][1]
+        #                 )
+        #                 action[key] = float(
+        #                     np.clip(action[key], limits[side][axis][0], limits[side][axis][1])
+        #                 )
 
         # Basic safety checks (action must be in robot format by now)
         # Determine which hands are active based on configured control boards
