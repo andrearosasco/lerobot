@@ -83,6 +83,12 @@ class HandSafetyChecker:
             if position_sum <= 1e-6:
                 logger.debug("Invalid action: %s arm position values are all zeros", side)
                 return False
+            # If all values of rotation are zeros, return false
+            arm_rotation_values = [action[f"{side}_hand.orientation.d{i}" ]for i in range(1, 7)]
+            if all([x == 0 for x in arm_rotation_values]):
+                logger.debug("Invalid action: %s arm rotation values are all zeros", side)
+                return False
+
         
         return True
     

@@ -196,7 +196,11 @@ class MetaQuest(Teleoperator):
 
         position = transform[:3, 3]
         # quat = R.from_matrix(transform[:3, :3]).as_quat(canonical=True, scalar_first=True)  # [w, x, y, z]
-        pose_6d = matrix_to_rotation_6d(torch.tensor(R.from_matrix(transform[:3, :3]).as_matrix())).numpy()
+        try:
+            pose_6d = matrix_to_rotation_6d(torch.tensor(R.from_matrix(transform[:3, :3]).as_matrix())).numpy()
+        except ValueError as e:
+            print(f"Exception determinant metaquest head: {e}")
+            pose_6d = np.array([1, 0, 0, 0, 1, 0])
         return np.r_[position, pose_6d]
 
 
