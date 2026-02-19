@@ -135,6 +135,8 @@ class ErgoCub(Robot):
         # Read camera data using standard LeRobot interface
         for cam_name, cam in self.cameras.items():
             cam_data = cam.read()
+            if isinstance(cam_data, np.ndarray):
+                obs[cam_name] = cam_data
             if "image" in cam_data:
                 obs[cam_name] = cam_data["image"]
             if "depth" in cam_data:
