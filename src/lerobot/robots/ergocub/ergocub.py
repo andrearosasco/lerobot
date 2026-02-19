@@ -52,7 +52,7 @@ class ErgoCub(Robot):
         self.acc_state = None
 
         # Initialize safety checker
-        self.safety_checker = HandSafetyChecker(position_tolerance=0.1)
+        self.safety_checker = HandSafetyChecker(position_tolerance=config.position_tolerance)
         
 
         yarp.Network.init()
@@ -156,25 +156,6 @@ class ErgoCub(Robot):
         # If using relative mode, convert incoming deltas to absolute targets
         if not self.absolute:
             action = self.to_absolute(action)
-
-        # Clip hand position targets to fixed limits (absolute mode).
-        print("clipping has been disabled in ergocub.py")
-        # limits = {
-        #     "left": {"x": (0.0, 0.40), "y": (-0.40, 0.40), "z": (0.0, 0.50)},
-        #     "right": {"x": (0.0, 0.40), "y": (-0.40, 0.40), "z": (0.0, 0.50)},
-        # }
-        # for side in ["left", "right"]:
-        #     for axis in ["x", "y", "z"]:
-        #         key = f"{side}_hand.position.{axis}"
-        #         if key in action:
-        #             if action[key] < limits[side][axis][0] or action[key] > limits[side][axis][1]:
-        #                 logger.info(
-        #                     "Clipping %s to limits: %.3f -> [%.3f, %.3f]",
-        #                     key, action[key], limits[side][axis][0], limits[side][axis][1]
-        #                 )
-        #                 action[key] = float(
-        #                     np.clip(action[key], limits[side][axis][0], limits[side][axis][1])
-        #                 )
 
         # Basic safety checks (action must be in robot format by now)
         # Determine which hands are active based on configured control boards

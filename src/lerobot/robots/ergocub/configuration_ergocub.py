@@ -44,3 +44,4 @@ class ErgoCubConfig(RobotConfig):
     # If False, actions are interpreted as deltas relative to the current/last target.
     absolute: bool = True
     finger_scale: float = 1.0
+    position_tolerance: float = 0.1  # Tolerance for safety checks, in radians or meters depending on the joint
