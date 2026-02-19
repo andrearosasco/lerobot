@@ -48,15 +48,16 @@
         "--robot.type=ergocub",
         "--robot.remote_prefix=/ergocub",
         "--robot.local_prefix=/lerobot",
-        "--robot.cameras={ external: {\"type\": \"yarp\", \"yarp_name\": \"depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
-        "--robot.control_boards=[bimanual,head,fingers]",
+        "--robot.cameras={ egocentric: {\"type\": \"yarp\", \"yarp_name\": \"depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
+        "--robot.control_boards=[bimanual,head]",
         "--robot.state_boards=[bimanual,head]",
         "--dataset.repo_id=HSP-IIT/eval_test",
         "--dataset.fps=10",
-        "--dataset.episode_time=1000",
-        "--dataset.num_episodes=1",
-        "--policy.path=steb6/groot-hri_ste_carmela_no_fingers",
-        "--dataset.single_task=interact with the human",
+        "--dataset.episode_time=10000",
+        "--dataset.num_episodes=10",
+        // "--policy.path=steb6/groot-ROBOARENA_ONLY_YAW_FINAL-notext",
+        "--policy.path=ar0s/pi05_hri",
+        "--dataset.single_task=Perform the task.",
         "--dataset.reset_time=0",
       ]
     },
@@ -131,6 +132,32 @@
       ]
     },
     {
+      "name": "Record (REAL)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_record.py",
+      "console": "integratedTerminal",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      },
+      "preLaunchTask": "clear-record",
+      "args": [
+        "--robot.type=ergocub",
+        "--robot.remote_prefix=/ergocub",
+        "--robot.local_prefix=/lerobot",
+        "--robot.cameras={egocentric:{\"type\": \"yarp\", \"yarp_name\": \"depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
+        "--robot.control_boards=[head,bimanual]",
+        "--robot.state_boards=[head,bimanual]",
+        "--teleop.type=metaquest",
+        "--dataset.repo_id=steb6/ROBOARENA_ONLY_YAW_fixed_4",
+        "--dataset.num_episodes=1",
+        "--dataset.fps=10",
+        "--dataset.reset_time=1",
+        "--dataset.episode_time=300",
+        "--dataset.single_task=Interact with the human."
+      ]
+    },
+    {
       "name": "Visualize dataset",
       "type": "debugpy",
       "request": "launch",
@@ -145,33 +172,6 @@
         "--repo-id=steb6/hri_real_3"
       ],
       "justMyCode": false
-    },
-    {
-      "name": "Record Real",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_record.py",
-      "console": "integratedTerminal",
-      "env": {
-        "PYTHONPATH": "${workspaceFolder}/src"
-      },
-      "preLaunchTask": "clear-record",
-      "args": [
-        "--robot.type=ergocub",
-        "--robot.remote_prefix=/ergocub",
-        "--robot.local_prefix=/lerobot",
-        "--robot.cameras={ egocentric: {\"type\": \"yarp\", \"yarp_name\": \"depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
-        "--robot.control_boards=[head,bimanual]",
-        "--robot.state_boards=[head,bimanual]",
-        "--teleop.type=metaquest",
-        "--dataset.repo_id=steb6/IROS_HANDOVER",
-        "--dataset.num_episodes=1",
-        "--dataset.fps=10",
-        "--dataset.reset_time=0",
-        "--dataset.episode_time=120",
-        "--dataset.single_task=handover",
-        "--resume=true"
-      ]
     }
   ]
 }
