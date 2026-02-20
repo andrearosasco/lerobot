@@ -14,6 +14,8 @@
 
 import numbers
 import os
+from pathlib import Path
+import logging
 
 import numpy as np
 import rerun as rr
@@ -26,6 +28,8 @@ from .constants import ACTION, ACTION_PREFIX, OBS_PREFIX, OBS_STR
 
 
 _ERGOCUB_URDF_LOGGED = False
+_ERGOCUB_MODEL_WARNED = False
+logger = logging.getLogger(__name__)
 
 
 def init_rerun(
@@ -153,6 +157,38 @@ def _log_ergocub_pose_frame(entity_path: str, pose: tuple[np.ndarray, np.ndarray
     )
 
 
+def _resolve_visual_asset_path(urdf_path: str) -> str | None:
+    urdf_file = Path(urdf_path)
+    if urdf_file.suffix.lower() != ".urdf":
+        return str(urdf_file)
+
+    for suffix in (".glb", ".gltf", ".obj", ".stl"):
+        candidate = urdf_file.with_suffix(suffix)
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def _log_ergocub_skeleton(actual_left, actual_right, target_left, target_right) -> None:
+    torso_origin = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+    head_anchor = np.array([0.0, 0.0, 0.3], dtype=np.float32)
+
+    actual_strips = [[torso_origin, head_anchor]]
+    target_strips = [[torso_origin, head_anchor]]
+
+    if actual_left is not None:
+        actual_strips.append([torso_origin, actual_left[0]])
+    if actual_right is not None:
+        actual_strips.append([torso_origin, actual_right[0]])
+    if target_left is not None:
+        target_strips.append([torso_origin, target_left[0]])
+    if target_right is not None:
+        target_strips.append([torso_origin, target_right[0]])
+
+    rr.log("ergocub/body/actual", rr.LineStrips3D(actual_strips), static=False)
+    rr.log("ergocub/body/target", rr.LineStrips3D(target_strips), static=False)
+
+
 def log_rerun_data_ergocub(
     observation: RobotObservation | None = None,
     action: RobotAction | None = None,
@@ -167,6 +203,7 @@ def log_rerun_data_ergocub(
     - actual frames from observation (`ergocub/frames/actual/*`)
     """
     global _ERGOCUB_URDF_LOGGED
+    global _ERGOCUB_MODEL_WARNED
 
     log_rerun_data(observation=observation, action=action, compress_images=compress_images)
 
@@ -187,7 +224,16 @@ def log_rerun_data_ergocub(
                 "Set ROBOT_URDF_PATH to a valid URDF file."
             )
 
-        rr.log("ergocub/model", rr.Asset3D(path=urdf_path), static=True)
+        visual_asset_path = _resolve_visual_asset_path(urdf_path)
+        if visual_asset_path is not None:
+            rr.log("ergocub/model", rr.Asset3D(path=visual_asset_path), static=True)
+        elif not _ERGOCUB_MODEL_WARNED:
+            logger.warning(
+                "Rerun cannot directly render URDF at '%s'. "
+                "Place a mesh with the same basename (.glb/.gltf/.obj/.stl) next to it to show the full robot model.",
+                urdf_path,
+            )
+            _ERGOCUB_MODEL_WARNED = True
         _ERGOCUB_URDF_LOGGED = True
 
     target_left = _extract_pose_dict(action, "left_hand")
@@ -203,3 +249,5 @@ def log_rerun_data_ergocub(
         _log_ergocub_pose_frame("ergocub/frames/actual/left_hand", actual_left)
     if actual_right is not None:
         _log_ergocub_pose_frame("ergocub/frames/actual/right_hand", actual_right)
+
+    _log_ergocub_skeleton(actual_left, actual_right, target_left, target_right)
