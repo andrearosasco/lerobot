@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import logging
 import importlib
+import hashlib
 import xml.etree.ElementTree as ET
 from typing import Any
 
@@ -36,7 +37,80 @@ _ERGOCUB_SCENE_EXPORT_WARNED = False
 _ERGOCUB_URDF_PATH: str | None = None
 _ERGOCUB_URDF_MODEL: Any | None = None
 _ERGOCUB_SCENE_FRAME_IDX = 0
+_PLOT_STYLE_LOGGED: set[str] = set()
 logger = logging.getLogger(__name__)
+
+
+def _stable_color_for_name(name: str) -> np.ndarray:
+    """Generate a stable, non-white RGBA color from a geometry name."""
+    # Avoid near-white and overly dark colors for better contrast.
+    digest = hashlib.md5(name.encode("utf-8")).digest()
+    r = 50 + (digest[0] % 170)
+    g = 50 + (digest[1] % 170)
+    b = 50 + (digest[2] % 170)
+    return np.array([r, g, b, 255], dtype=np.uint8)
+
+
+def _style_scene_geometries(scene: Any) -> None:
+    """Apply readable per-geometry colors so the robot is not flat white."""
+    geometries = getattr(scene, "geometry", None)
+    if not geometries:
+        return
+
+    for geom_name, geom in geometries.items():
+        if not hasattr(geom, "faces"):
+            continue
+        color = _stable_color_for_name(str(geom_name))
+        # `face_colors` broadcast to all faces; this works for Trimesh visuals.
+        geom.visual.face_colors = color
+
+
+def _plot_signal_name(entity_path: str) -> str:
+    if entity_path.startswith(f"{OBS_STR}."):
+        return entity_path[len(f"{OBS_STR}.") :]
+    if entity_path.startswith(f"{ACTION}."):
+        return entity_path[len(f"{ACTION}.") :]
+    return entity_path
+
+
+def _ensure_plot_style(entity_path: str, is_observation: bool) -> None:
+    """Style a scalar timeseries path once.
+
+    - Observation: dotted-like (points only)
+    - Action: solid line only
+    Both share the same color for matching signal names.
+    """
+    if entity_path in _PLOT_STYLE_LOGGED:
+        return
+
+    signal_name = _plot_signal_name(entity_path)
+    color = _stable_color_for_name(signal_name)
+    color_batch = np.array([color], dtype=np.uint8)
+
+    rr.log(
+        entity_path,
+        rr.archetypes.SeriesLines(
+            colors=color_batch,
+            widths=[2.0],
+            names=[signal_name],
+            visible_series=[not is_observation],
+        ),
+        static=True,
+    )
+    rr.log(
+        entity_path,
+        rr.archetypes.SeriesPoints(
+            colors=color_batch,
+            marker_sizes=[2.5],
+            names=[signal_name],
+            visible_series=[is_observation],
+        ),
+        static=True,
+    )
+
+    _PLOT_STYLE_LOGGED.add(entity_path)
+
+
 
 
 def init_rerun(
@@ -64,6 +138,20 @@ def _is_scalar(x):
     return isinstance(x, (float | numbers.Real | np.integer | np.floating)) or (
         isinstance(x, np.ndarray) and x.ndim == 0
     )
+
+
+def _to_numpy(x: Any) -> np.ndarray | None:
+    """Best-effort conversion to numpy array for logging."""
+    if isinstance(x, np.ndarray):
+        return x
+    if isinstance(x, torch.Tensor):
+        return x.detach().cpu().numpy()
+    if isinstance(x, (list, tuple)):
+        try:
+            return np.asarray(x)
+        except Exception:
+            return None
+    return None
 
 
 def log_rerun_data(
@@ -97,18 +185,29 @@ def log_rerun_data(
             key = k if str(k).startswith(OBS_PREFIX) else f"{OBS_STR}.{k}"
 
             if _is_scalar(v):
+                _ensure_plot_style(key, is_observation=True)
                 rr.log(key, rr.Scalars(float(v)))
-            elif isinstance(v, np.ndarray):
-                arr = v
+            else:
+                arr = _to_numpy(v)
+                if arr is None:
+                    continue
                 # Convert CHW -> HWC when needed
                 if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
                     arr = np.transpose(arr, (1, 2, 0))
                 if arr.ndim == 1:
                     for i, vi in enumerate(arr):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
-                else:
+                        scalar_key = f"{key}_{i}"
+                        _ensure_plot_style(scalar_key, is_observation=True)
+                        rr.log(scalar_key, rr.Scalars(float(vi)))
+                elif arr.ndim in (2, 3):
                     img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
                     rr.log(key, entity=img_entity, static=True)
+                else:
+                    flat = arr.flatten()
+                    for i, vi in enumerate(flat):
+                        scalar_key = f"{key}_{i}"
+                        _ensure_plot_style(scalar_key, is_observation=True)
+                        rr.log(scalar_key, rr.Scalars(float(vi)))
 
     if action:
         for k, v in action.items():
@@ -117,16 +216,27 @@ def log_rerun_data(
             key = k if str(k).startswith(ACTION_PREFIX) else f"{ACTION}.{k}"
 
             if _is_scalar(v):
+                _ensure_plot_style(key, is_observation=False)
                 rr.log(key, rr.Scalars(float(v)))
-            elif isinstance(v, np.ndarray):
-                if v.ndim == 1:
-                    for i, vi in enumerate(v):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
+            else:
+                arr = _to_numpy(v)
+                if arr is None:
+                    continue
+                if arr.ndim == 0:
+                    _ensure_plot_style(key, is_observation=False)
+                    rr.log(key, rr.Scalars(float(arr.item())))
+                elif arr.ndim == 1:
+                    for i, vi in enumerate(arr):
+                        scalar_key = f"{key}_{i}"
+                        _ensure_plot_style(scalar_key, is_observation=False)
+                        rr.log(scalar_key, rr.Scalars(float(vi)))
                 else:
                     # Fall back to flattening higher-dimensional arrays
-                    flat = v.flatten()
+                    flat = arr.flatten()
                     for i, vi in enumerate(flat):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
+                        scalar_key = f"{key}_{i}"
+                        _ensure_plot_style(scalar_key, is_observation=False)
+                        rr.log(scalar_key, rr.Scalars(float(vi)))
 
 
 def _extract_pose_dict(data: dict[str, float] | None, prefix: str) -> tuple[np.ndarray, np.ndarray] | None:
@@ -306,6 +416,9 @@ def _export_urdf_scene_glb(
         scene = getattr(urdf, "scene", None)
         if scene is None:
             raise RuntimeError("URDF scene graph is empty; unable to export full ergoCub model.")
+
+        # Improve readability in Rerun: color each mesh distinctly.
+        _style_scene_geometries(scene)
 
         cache_dir = Path.home() / ".cache" / "huggingface" / "lerobot" / "rerun"
         cache_dir.mkdir(parents=True, exist_ok=True)
