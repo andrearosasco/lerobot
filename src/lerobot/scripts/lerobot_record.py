@@ -143,7 +143,7 @@ from lerobot.utils.utils import (
     init_logging,
     log_say,
 )
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, log_rerun_data_ergocub
 
 
 @dataclass
@@ -322,6 +322,7 @@ def record_loop(
         postprocessor.reset()
 
     timestamp = 0
+    rerun_logger = log_rerun_data_ergocub if robot.name == "ergocub" else log_rerun_data
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
@@ -396,9 +397,7 @@ def record_loop(
             dataset.add_frame(frame)
 
         if display_data:
-            log_rerun_data(
-                observation=obs_processed, action=action_values, compress_images=display_compressed_images
-            )
+            rerun_logger(observation=obs_processed, action=action_values, compress_images=display_compressed_images)
 
         dt_s = time.perf_counter() - start_loop_t
 

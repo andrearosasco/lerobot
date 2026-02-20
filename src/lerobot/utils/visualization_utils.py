@@ -17,10 +17,15 @@ import os
 
 import numpy as np
 import rerun as rr
+import torch
 
 from lerobot.processor import RobotAction, RobotObservation
+from lerobot.utils.rotation import Rotation, rotation_6d_to_matrix
 
 from .constants import ACTION, ACTION_PREFIX, OBS_PREFIX, OBS_STR
+
+
+_ERGOCUB_URDF_LOGGED = False
 
 
 def init_rerun(
@@ -110,3 +115,91 @@ def log_rerun_data(
                     flat = v.flatten()
                     for i, vi in enumerate(flat):
                         rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
+
+
+def _extract_pose_dict(data: dict[str, float] | None, prefix: str) -> tuple[np.ndarray, np.ndarray] | None:
+    if not data:
+        return None
+
+    pos_keys = [f"{prefix}.position.x", f"{prefix}.position.y", f"{prefix}.position.z"]
+    rot_keys = [
+        f"{prefix}.orientation.d1",
+        f"{prefix}.orientation.d2",
+        f"{prefix}.orientation.d3",
+        f"{prefix}.orientation.d4",
+        f"{prefix}.orientation.d5",
+        f"{prefix}.orientation.d6",
+    ]
+
+    if not all(k in data for k in pos_keys + rot_keys):
+        return None
+
+    position = np.array([float(data[k]) for k in pos_keys], dtype=np.float32)
+    rot6d = np.array([float(data[k]) for k in rot_keys], dtype=np.float32)
+    rotation_matrix = rotation_6d_to_matrix(torch.tensor(rot6d, dtype=torch.float32)).numpy()
+    quaternion_xyzw = Rotation.from_matrix(rotation_matrix).as_quat().astype(np.float32)
+    return position, quaternion_xyzw
+
+
+def _log_ergocub_pose_frame(entity_path: str, pose: tuple[np.ndarray, np.ndarray]) -> None:
+    position, quaternion_xyzw = pose
+    rr.log(
+        entity_path,
+        rr.Transform3D(
+            translation=position,
+            rotation=rr.Quaternion(xyzw=quaternion_xyzw),
+            axis_length=0.08,
+        ),
+    )
+
+
+def log_rerun_data_ergocub(
+    observation: RobotObservation | None = None,
+    action: RobotAction | None = None,
+    compress_images: bool = False,
+) -> None:
+    """
+    Logs standard observation/action streams and ErgoCub-specific 3D entities to Rerun.
+
+    Adds:
+    - static ErgoCub URDF (`ergocub/model`)
+    - target frames from action (`ergocub/frames/target/*`)
+    - actual frames from observation (`ergocub/frames/actual/*`)
+    """
+    global _ERGOCUB_URDF_LOGGED
+
+    log_rerun_data(observation=observation, action=action, compress_images=compress_images)
+
+    if not _ERGOCUB_URDF_LOGGED:
+        try:
+            from lerobot.motors.ergocub.urdf_utils import resolve_ergocub_urdf
+
+            urdf_path = resolve_ergocub_urdf()
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to resolve ergoCub URDF for Rerun visualization. "
+                "Set ROBOT_URDF_PATH to a valid URDF file."
+            ) from exc
+
+        if not urdf_path or not os.path.exists(urdf_path):
+            raise FileNotFoundError(
+                "Failed to resolve ergoCub URDF for Rerun visualization. "
+                "Set ROBOT_URDF_PATH to a valid URDF file."
+            )
+
+        rr.log("ergocub/model", rr.Asset3D(path=urdf_path), static=True)
+        _ERGOCUB_URDF_LOGGED = True
+
+    target_left = _extract_pose_dict(action, "left_hand")
+    target_right = _extract_pose_dict(action, "right_hand")
+    actual_left = _extract_pose_dict(observation, "left_hand")
+    actual_right = _extract_pose_dict(observation, "right_hand")
+
+    if target_left is not None:
+        _log_ergocub_pose_frame("ergocub/frames/target/left_hand", target_left)
+    if target_right is not None:
+        _log_ergocub_pose_frame("ergocub/frames/target/right_hand", target_right)
+    if actual_left is not None:
+        _log_ergocub_pose_frame("ergocub/frames/actual/left_hand", actual_left)
+    if actual_right is not None:
+        _log_ergocub_pose_frame("ergocub/frames/actual/right_hand", actual_right)
