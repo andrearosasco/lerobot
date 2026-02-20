@@ -45,7 +45,7 @@
       "python": "/home/ergocub/mambaforge/envs/lerobot/bin/python",
       "preLaunchTask": "clear-test",
       "args": [
-        "--config_path data/cfgs/eval/eval_gr00t.yaml"
+        "--config_path=cfgs/eval/eval_gr00t.yaml"
       ]
     },
     {

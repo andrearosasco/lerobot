@@ -573,8 +573,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
                 dataset.save_episode()
                 recorded_episodes += 1
-    except Exception as e:
-        logging.error(f"An error occurred during recording: {e}", exc_info=True)
     finally:
         log_say("Stop recording", cfg.play_sounds, blocking=True)
 
