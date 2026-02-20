@@ -143,153 +143,6 @@ class SharpnessJitter(Transform):
         sharpness_factor = params["sharpness_factor"]
         return self._call_kernel(F.adjust_sharpness, inpt, sharpness_factor=sharpness_factor)
 
-import os
-from pathlib import Path
-from typing import Any
-
-import torch
-from torchvision.io import read_image
-from torchvision.transforms import v2
-from torchvision.transforms.v2 import Transform, functional as F
-
-
-class GreenScreenReplace(Transform):
-    """Replace green pixels with a random background sampled from a directory.
-
-    Expected input: torch.Tensor with shape [..., 3, H, W] (uint8 or float).
-    Backgrounds are read from `pool_dir` and resized to match HxW.
-
-    Args:
-        pool_dir: path to a directory containing background images.
-        green_ratio: how much stronger G must be relative to max(R,B) to be considered "green".
-            Rule: G > green_ratio * max(R,B)
-        min_green: minimum G value (in [0,1] after conversion) to be considered for keying.
-        spill: additional margin: (G - max(R,B)) > spill (in [0,1])
-        extensions: allowed image extensions.
-    """
-
-    def __init__(
-        self,
-        pool_dir: str | os.PathLike,
-        green_ratio: float = 1.25,
-        min_green: float = 0.25,
-        spill: float = 0.10,
-        extensions: tuple[str, ...] = (".jpg", ".jpeg", ".png", ".webp"),
-        hue_min: float = 0.20,
-        hue_max: float = 0.45,
-        min_s: float = 0.2,
-        min_v: float = 0.2,
-    ) -> None:
-        super().__init__()
-        self.pool_dir = Path(pool_dir)
-        self.green_ratio = float(green_ratio)
-        self.min_green = float(min_green)
-        self.spill = float(spill)
-        self.extensions = tuple(ext.lower() for ext in extensions)
-        self.hue_min = float(hue_min)
-        self.hue_max = float(hue_max)
-        self.min_s = float(min_s)
-        self.min_v = float(min_v)
-
-        if not self.pool_dir.exists() or not self.pool_dir.is_dir():
-            raise ValueError(f"{self.pool_dir=} must exist and be a directory.")
-
-        self._bg_paths = self._list_backgrounds(self.pool_dir)
-        if len(self._bg_paths) == 0:
-            raise ValueError(f"No background images found under {self.pool_dir} with {self.extensions=}.")
-
-    def _list_backgrounds(self, pool_dir: Path) -> list[Path]:
-        files: list[Path] = []
-        for p in pool_dir.rglob("*"):
-            if p.is_file() and p.suffix.lower() in self.extensions:
-                files.append(p)
-        files.sort()
-        return files
-
-    def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
-        # Pick a random background index each call.
-        idx = int(torch.randint(low=0, high=len(self._bg_paths), size=(1,)).item())
-        return {"bg_index": idx}
-
-    def _load_background(self, path: Path) -> torch.Tensor:
-        # read_image returns uint8 tensor [C, H, W] in RGB.
-        bg = read_image(str(path))  # uint8, CPU
-        if bg.ndim != 3 or bg.shape[0] not in (1, 3):
-            raise ValueError(f"Background image {path} has unsupported shape {tuple(bg.shape)}.")
-
-        # Force 3 channels.
-        if bg.shape[0] == 1:
-            bg = bg.repeat(3, 1, 1)
-        return bg
-
-    def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
-        # We only support Tensor inputs here (matches your pipeline expectations).
-        if not isinstance(inpt, torch.Tensor):
-            raise TypeError(f"GreenScreenReplace expects torch.Tensor input, got {type(inpt)}")
-
-        # Expect [..., 3, H, W]
-        if inpt.ndim < 3:
-            raise ValueError(f"Input must have at least 3 dims, got {inpt.ndim=}.")
-        if inpt.shape[-3] != 3:
-            raise ValueError(f"Expected 3 channels at dim -3, got {inpt.shape[-3]=}.")
-
-        # Get spatial size
-        _, h, w = inpt.shape[-3], inpt.shape[-2], inpt.shape[-1]
-
-        # Load & resize background
-        bg_path = self._bg_paths[params["bg_index"]]
-        bg = self._load_background(bg_path)  # [3, Hb, Wb], uint8 on CPU
-        bg = F.resize(bg, size=[h, w], antialias=True)
-
-        # Match dtype/range for blending by going to float in [0,1]
-        orig_dtype = inpt.dtype
-        inpt_f = F.convert_image_dtype(inpt, dtype=torch.float32)
-        bg_f = F.convert_image_dtype(bg, dtype=torch.float32)
-
-        # Move bg to input device and expand to match leading dims of inpt
-        bg_f = bg_f.to(device=inpt_f.device)
-        # Expand to [..., 3, H, W]
-        for _ in range(inpt_f.ndim - 3):
-            bg_f = bg_f.unsqueeze(0)
-        bg_f = bg_f.expand(*inpt_f.shape[:-3], 3, h, w)
-
-        # Convert RGB to HSV for green detection
-        # inpt_f: [..., 3, H, W] in [0,1]
-        rgb = inpt_f.permute(*range(inpt_f.ndim - 3), -2, -1, -3)  # [..., H, W, 3]
-        rgb = rgb.clamp(0, 1)
-        maxc, _ = rgb.max(-1)
-        minc, _ = rgb.min(-1)
-        v = maxc
-        s = torch.where(maxc == 0, torch.zeros_like(maxc), (maxc - minc) / maxc)
-        rc, gc, bc = rgb.unbind(-1)
-        # Hue calculation
-        h = torch.zeros_like(maxc)
-        mask = (maxc == rc)
-        h[mask] = ((gc - bc)[mask] / (maxc - minc)[mask]) % 6
-        mask = (maxc == gc)
-        h[mask] = ((bc - rc)[mask] / (maxc - minc)[mask]) + 2
-        mask = (maxc == bc)
-        h[mask] = ((rc - gc)[mask] / (maxc - minc)[mask]) + 4
-        h = h / 6.0
-        h = h % 1.0
-        # Use configurable HSV thresholds for green
-        green_mask = (
-            (h >= self.hue_min) & (h <= self.hue_max) &
-            (s >= self.min_s) & (v >= self.min_v)
-        )
-        # Restore mask shape to [..., 1, H, W]
-        green_mask = green_mask.permute(*range(green_mask.ndim - 2), -2, -1).unsqueeze(-3).to(dtype=inpt_f.dtype)
-
-        # Morphological dilation to expand the mask by 1 pixel (kernel size 3x3)
-        import torch.nn.functional as Fnn
-        kernel = torch.ones((1, 1, 3, 3), dtype=green_mask.dtype, device=green_mask.device)
-        pad = (1, 1, 1, 1)
-        green_mask_dilated = Fnn.max_pool2d(green_mask, kernel_size=3, stride=1, padding=1)
-
-        out_f = inpt_f * (1.0 - green_mask_dilated) + bg_f * green_mask_dilated
-        out = F.convert_image_dtype(out_f, dtype=orig_dtype)
-        return out
-
 
 @dataclass
 class ImageTransformConfig:
@@ -357,7 +210,7 @@ class ImageTransformsConfig:
                 weight=1.0,
                 type="RandomAffine",
                 kwargs={"degrees": (-5.0, 5.0), "translate": (0.05, 0.05)},
-            )
+            ),
         }
     )
 
@@ -383,14 +236,10 @@ class ImageTransforms(Transform):
         super().__init__()
         self._cfg = cfg
 
-        self.always_apply = []  # Transforms with weight=-1
         self.weights = []
         self.transforms = {}
         for tf_name, tf_cfg in cfg.tfs.items():
-            if tf_cfg.weight == 0.0:
-                continue
-            if tf_cfg.weight == -1.0:
-                self.always_apply.append(make_transform_from_config(tf_cfg))
+            if tf_cfg.weight <= 0.0:
                 continue
 
             self.transforms[tf_name] = make_transform_from_config(tf_cfg)
@@ -408,9 +257,4 @@ class ImageTransforms(Transform):
             )
 
     def forward(self, *inputs: Any) -> Any:
-        # Apply always-active transforms first
-        for transform in self.always_apply:
-            outputs = transform(*inputs)
-            inputs = outputs if len(inputs) > 1 else (outputs,)
-        # Then apply random subset
         return self.tf(*inputs)

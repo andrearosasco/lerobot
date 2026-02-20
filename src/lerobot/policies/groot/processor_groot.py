@@ -142,7 +142,6 @@ def make_groot_pre_post_processors(
             max_action_dim=max_action_dim,
             language_key="task",
             formalize_language=False,
-            use_text=config.use_text,
             embodiment_tag=config.embodiment_tag,
             normalize_min_max=True,
             stats=padded_stats,
@@ -222,7 +221,6 @@ class GrootPackInputsStep(ProcessorStep):
     max_action_dim: int = 32
     language_key: str = "task"
     formalize_language: bool = False
-    use_text: bool = True
     embodiment_tag: str = "new_embodiment"
     embodiment_mapping: dict[str, int] = field(
         default_factory=lambda: {
@@ -289,18 +287,15 @@ class GrootPackInputsStep(ProcessorStep):
                 obs.pop(k, None)
 
         # 2) Language (string)
-        if self.use_text:
-            lang = comp.get(self.language_key)
-            if isinstance(lang, list):
-                lang = lang[0] if len(lang) > 0 else None
-            if not lang:
-                lang = "Perform the task."
-            if self.formalize_language:
-                lang = (lang or "").lower()
-                lang = "".join(ch for ch in lang if ch.isalnum() or ch.isspace())
-            comp["language"] = lang
-        else:
-            comp["language"] = "Perform the task."
+        lang = comp.get(self.language_key)
+        if isinstance(lang, list):
+            lang = lang[0] if len(lang) > 0 else None
+        if not lang:
+            lang = "Perform the task."
+        if self.formalize_language:
+            lang = (lang or "").lower()
+            lang = "".join(ch for ch in lang if ch.isalnum() or ch.isspace())
+        comp["language"] = lang
 
         # 3) State/state_mask -> (B, 1, max_state_dim)
         if OBS_STATE in obs:
@@ -397,7 +392,6 @@ class GrootPackInputsStep(ProcessorStep):
             "max_action_dim": self.max_action_dim,
             "language_key": self.language_key,
             "formalize_language": self.formalize_language,
-            "use_text": self.use_text,
             "embodiment_tag": self.embodiment_tag,
             "embodiment_mapping": self.embodiment_mapping,
             "normalize_min_max": self.normalize_min_max,

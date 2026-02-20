@@ -13,89 +13,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from dataclasses import dataclass, field
 from typing import Any
 
 import torch
-from transformers import AutoTokenizer
 
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
-    EnvTransition,
     NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
-    ProcessorStep,
-    ProcessorStepRegistry,
     RenameObservationsProcessorStep,
-    TransitionKey,
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
-from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.utils.constants import (
-    OBS_LANGUAGE_ATTENTION_MASK,
-    OBS_LANGUAGE_TOKENS,
-    POLICY_POSTPROCESSOR_DEFAULT_NAME,
-    POLICY_PREPROCESSOR_DEFAULT_NAME,
-)
-
-
-@dataclass
-@ProcessorStepRegistry.register(name="act_language_tokenizer")
-class ACTLanguageTokenizerStep(ProcessorStep):
-    """
-    Tokenizes task text for ACT language conditioning.
-    
-    Similar to TokenizerProcessorStep in PI0/PI05, but simplified for ACT.
-    Converts task strings to token IDs and attention masks.
-    """
-    
-    tokenizer_name: str = "openai/clip-vit-base-patch32"
-    max_length: int = 77
-    task_key: str = "task"
-    
-    # Internal tokenizer instance
-    tokenizer: Any = field(default=None, init=False, repr=False)
-    
-    def __post_init__(self):
-        # Load tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
-        
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        transition = transition.copy()
-        
-        # Get task text from complementary data
-        task = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.task_key)
-        if task is None:
-            raise ValueError(f"Task not found in complementary data with key '{self.task_key}'")
-        
-        # Tokenize
-        tokenized = self.tokenizer(
-            task,
-            padding="max_length",
-            max_length=self.max_length,
-            truncation=True,
-            return_tensors="pt",
-        )
-        
-        # Add to observation
-        observation = dict(transition.get(TransitionKey.OBSERVATION, {}))
-        observation[OBS_LANGUAGE_TOKENS] = tokenized["input_ids"].squeeze(0)  # Remove batch dim
-        observation[OBS_LANGUAGE_ATTENTION_MASK] = tokenized["attention_mask"].squeeze(0).bool()
-        
-        transition[TransitionKey.OBSERVATION] = observation
-        
-        return transition
-    
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """Add language token features to the feature dictionary."""
-        # This step adds new features but doesn't modify existing ones
-        return features
+from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 
 def make_act_pre_post_processors(
@@ -131,18 +64,6 @@ def make_act_pre_post_processors(
             device=config.device,
         ),
     ]
-    
-    # Add language tokenization if language conditioning is enabled
-    if config.use_language_conditioning:
-        input_steps.insert(
-            0,  # Add before other steps
-            ACTLanguageTokenizerStep(
-                tokenizer_name=config.language_model_name,
-                max_length=config.max_token_length,
-                task_key="task",
-            ),
-        )
-    
     output_steps = [
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats

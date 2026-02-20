@@ -365,7 +365,8 @@ def encode_video_frames(
 
     # Set logging level
     if log_level is not None:
-        av.logging.set_level(log_level)
+        # "While less efficient, it is generally preferable to modify logging with Python's logging"
+        logging.getLogger("libav").setLevel(log_level)
 
     # Create and open output file (overwrite by default)
     with av.open(str(video_path), "w") as output:
@@ -390,7 +391,7 @@ def encode_video_frames(
 
     # Reset logging level
     if log_level is not None:
-        av.logging.set_level(av.logging.ERROR)
+        av.logging.restore_default_callback()
 
     if not video_path.exists():
         raise OSError(f"Video encoding did not work. File not found: {video_path}.")

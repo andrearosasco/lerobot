@@ -64,7 +64,6 @@ from lerobot.robots import (  # noqa: F401
     reachy2,
     so_follower,
     unitree_g1,
-    ergocub
 )
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import register_third_party_plugins
@@ -78,19 +77,19 @@ from lerobot.utils.utils import (
 @dataclass
 class DatasetReplayConfig:
     # Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).
-    repo_id: str = "ar0s/ergocub-pick-plush"
+    repo_id: str
     # Episode to replay.
-    episode: int = 0
+    episode: int
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
     root: str | Path | None = None
     # Limit the frames per second. By default, uses the policy fps.
-    fps: int = 10
+    fps: int = 30
 
 
 @dataclass
 class ReplayConfig:
-    robot: RobotConfig = ergocub.ErgoCubConfig()
-    dataset: DatasetReplayConfig = DatasetReplayConfig()
+    robot: RobotConfig
+    dataset: DatasetReplayConfig
     # Use vocal synthesis to read events.
     play_sounds: bool = True
 
