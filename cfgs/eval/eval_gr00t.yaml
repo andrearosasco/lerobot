@@ -1,0 +1,16 @@
+<<: !include ..robots/ergocub.yaml
+
+dataset:
+  repo_id: HSP-IIT/eval_test
+  fps: 10
+  episode_time: 3000
+  num_episodes: 1
+  single_task: Interact with the human.
+  reset_time: 0
+
+policy:
+  path: steb6/groot-ROBOARENA_ONLY_YAW_FINAL-notext
+  n_action_steps: 10
+
+resume: false
+display_data: true

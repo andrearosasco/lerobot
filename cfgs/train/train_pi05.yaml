@@ -1,0 +1,24 @@
+num_workers: 10
+batch_size: 8
+
+wandb:
+  enable: true
+  disable_artifact: true
+  mode: online
+
+policy:
+  type: pi05
+  repo_id: ar0s/pi05_hri
+  device: cuda
+  chunk_size: 50
+  n_action_steps: 10
+  train_expert_only: false
+  n_obs_steps: 1
+  compile_model: true
+  gradient_checkpointing: true
+
+dataset:
+  repo_id: steb6/ROBOARENA_ONLY_YAW_FINAL
+  image_transforms:
+    enable: true
+  
