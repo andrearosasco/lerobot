@@ -60,25 +60,7 @@ lerobot-record \
   --dataset.num_episodes=25 \
   --dataset.single_task="Grab and handover the red cube to the other arm"
 ```
-
-Example recording with MetaCub:
-```shell
-python -m lerobot.record \
-  --robot.type=ergocub \
-  --robot.remote_prefix="/ergocubSim" \
-  --robot.local_prefix="/lerobot" \
-  --robot.cameras='{ agentview: {"type": "yarp", "yarp_name": "depthCamera", "width": 640, "height": 480, "fps": 30} }' \
-  --teleop.type=metaquest \
-  --teleop.remote_prefix="/metaControllClient" \
-  --teleop.local_prefix="/lerobot" \
-  --teleop.control_boards='[neck,left_arm,right_arm,fingers]' \
-  --display_data=false \
-  --dataset.repo_id=${HF_USER}/ergoCub-manipulation \
-  --dataset.num_episodes=50 \
-  --dataset.single_task="Pick up objects and place them in containers"
-```
 """
-
 
 import logging
 import time
