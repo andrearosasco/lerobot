@@ -55,6 +55,8 @@ class ErgoCubHeadController:
         self.neck_cmd_port = yarp.RpcClient()
         self.encoders_port = yarp.BufferedPortVector()
         self.torso_encoders_port = yarp.BufferedPortVector()
+        self._latest_torso_encoders: list[float] | None = None
+        self._latest_neck_encoders: list[float] | None = None
 
         # Initialize kinematics solver with torso + neck joints using shared resolver
         urdf_file = resolve_ergocub_urdf()
@@ -152,9 +154,11 @@ class ErgoCubHeadController:
         
         # Extract torso joint values (first 3 joints: pitch, roll, yaw)
         torso_values = np.array([torso_bottle.get(i) for i in range(min(3, torso_bottle.size()))])
+        self._latest_torso_encoders = torso_values.tolist()
         
         # Extract neck joint values and compute orientation
         neck_values = np.array([bottle.get(i) for i in range(bottle.size())])
+        self._latest_neck_encoders = neck_values[:3].tolist()
         
         # Combine torso + neck joints for kinematics (6 joints total: 3 torso + 3 neck)
         full_joint_values = np.concatenate([torso_values, neck_values[:3]])
@@ -169,6 +173,22 @@ class ErgoCubHeadController:
                        "head.orientation.d6": pose_6d[5].item(),}
 
         return return_dict
+
+    def get_latest_joint_states(self) -> dict[str, float]:
+        """Return latest torso and neck joint values read from YARP state ports."""
+        joints: dict[str, float] = {}
+
+        torso_names = ["torso_roll", "torso_pitch", "torso_yaw"]
+        for i, name in enumerate(torso_names):
+            if self._latest_torso_encoders is not None and i < len(self._latest_torso_encoders):
+                joints[name] = float(self._latest_torso_encoders[i])
+
+        neck_names = ["neck_pitch", "neck_roll", "neck_yaw"]
+        for i, name in enumerate(neck_names):
+            if self._latest_neck_encoders is not None and i < len(self._latest_neck_encoders):
+                joints[name] = float(self._latest_neck_encoders[i])
+
+        return joints
     
     def send_command(self, pose_6d: np.ndarray) -> None:
         """

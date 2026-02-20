@@ -397,7 +397,8 @@ def record_loop(
             dataset.add_frame(frame)
 
         if display_data:
-            rerun_logger(observation=obs_processed, action=action_values, compress_images=display_compressed_images)
+            rerun_logger = log_rerun_data_ergocub if robot.name == "ergocub" else log_rerun_data
+            rerun_logger(observation=obs_processed, action=action_values, compress_images=display_compressed_images, robot=robot)
 
         dt_s = time.perf_counter() - start_loop_t
 

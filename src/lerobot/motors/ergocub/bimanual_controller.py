@@ -58,6 +58,8 @@ class ErgoCubBimanualController:
         self.torso_encoders_port = yarp.BufferedPortBottle()
         
         self._is_connected = False
+        self._latest_torso_encoders: list[float] | None = None
+        self._latest_arm_encoders: dict[str, list[float]] = {"left": [], "right": []}
         
         # Initialize kinematics solvers for both hands if needed
         self.kinematics_solvers = {}
@@ -154,6 +156,7 @@ class ErgoCubBimanualController:
             torso_encoders = [torso_bottle.get(i).asFloat64() for i in range(min(3, torso_bottle.size()))]
         else:
             torso_encoders = [0.0, 0.0, 0.0]
+        self._latest_torso_encoders = torso_encoders
         
         # Read and compute poses for each hand
         for side in ["left", "right"]:
@@ -173,6 +176,7 @@ class ErgoCubBimanualController:
             all_encoders = [hand_bottle.get(i).asFloat64() for i in range(hand_bottle.size())]
             # First 7 are hand joints, last 6 are finger joints
             hand_encoders = all_encoders[:7] if len(all_encoders) >= 7 else [0.0] * 7
+            self._latest_arm_encoders[side] = hand_encoders
             
             # Combine torso + hand encoders
             joint_positions = np.array(torso_encoders + hand_encoders)
@@ -197,6 +201,33 @@ class ErgoCubBimanualController:
                 })
         
         return state
+
+    def get_latest_joint_states(self) -> dict[str, float]:
+        """Return latest torso/arm joint values read from YARP state ports."""
+        joints: dict[str, float] = {}
+
+        torso_names = ["torso_roll", "torso_pitch", "torso_yaw"]
+        for i, name in enumerate(torso_names):
+            if self._latest_torso_encoders is not None and i < len(self._latest_torso_encoders):
+                joints[name] = float(self._latest_torso_encoders[i])
+
+        arm_joint_names = [
+            "shoulder_pitch",
+            "shoulder_roll",
+            "shoulder_yaw",
+            "elbow",
+            "wrist_yaw",
+            "wrist_roll",
+            "wrist_pitch",
+        ]
+        for side in ("left", "right"):
+            values = self._latest_arm_encoders.get(side, [])
+            prefix = "l" if side == "left" else "r"
+            for i, jn in enumerate(arm_joint_names):
+                if i < len(values):
+                    joints[f"{prefix}_{jn}"] = float(values[i])
+
+        return joints
     
     def send_command(self, left_pose: np.ndarray = None, right_pose: np.ndarray = None) -> None:
         """

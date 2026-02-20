@@ -16,6 +16,9 @@ import numbers
 import os
 from pathlib import Path
 import logging
+import importlib
+import xml.etree.ElementTree as ET
+from typing import Any
 
 import numpy as np
 import rerun as rr
@@ -29,6 +32,10 @@ from .constants import ACTION, ACTION_PREFIX, OBS_PREFIX, OBS_STR
 
 _ERGOCUB_URDF_LOGGED = False
 _ERGOCUB_MODEL_WARNED = False
+_ERGOCUB_SCENE_EXPORT_WARNED = False
+_ERGOCUB_URDF_PATH: str | None = None
+_ERGOCUB_URDF_MODEL: Any | None = None
+_ERGOCUB_SCENE_FRAME_IDX = 0
 logger = logging.getLogger(__name__)
 
 
@@ -63,6 +70,7 @@ def log_rerun_data(
     observation: RobotObservation | None = None,
     action: RobotAction | None = None,
     compress_images: bool = False,
+    robot: Any | None = None,
 ) -> None:
     """
     Logs observation and action data to Rerun for real-time visualization.
@@ -145,6 +153,19 @@ def _extract_pose_dict(data: dict[str, float] | None, prefix: str) -> tuple[np.n
     return position, quaternion_xyzw
 
 
+def _require_pose_dict(data: dict[str, float] | None, prefix: str, source_name: str) -> tuple[np.ndarray, np.ndarray]:
+    pose = _extract_pose_dict(data, prefix)
+    if pose is not None:
+        return pose
+
+    available_keys = sorted(k for k in (data or {}).keys() if str(k).startswith(prefix))
+    raise ValueError(
+        f"Missing required {source_name} pose for '{prefix}'. "
+        f"Expected keys: {prefix}.position.(x|y|z) and {prefix}.orientation.(d1..d6). "
+        f"Available matching keys: {available_keys}"
+    )
+
+
 def _log_ergocub_pose_frame(entity_path: str, pose: tuple[np.ndarray, np.ndarray]) -> None:
     position, quaternion_xyzw = pose
     rr.log(
@@ -162,11 +183,139 @@ def _resolve_visual_asset_path(urdf_path: str) -> str | None:
     if urdf_file.suffix.lower() != ".urdf":
         return str(urdf_file)
 
+    # Fast path: same basename next to the URDF.
     for suffix in (".glb", ".gltf", ".obj", ".stl"):
         candidate = urdf_file.with_suffix(suffix)
         if candidate.exists():
             return str(candidate)
+
+    # Fallback: parse URDF and try to resolve mesh file references.
+    def _resolve_mesh_reference(mesh_ref: str) -> Path | None:
+        ref = mesh_ref.strip()
+        if not ref:
+            return None
+
+        if ref.startswith("file://"):
+            candidate = Path(ref.removeprefix("file://"))
+            return candidate if candidate.exists() else None
+
+        if ref.startswith("package://") or ref.startswith("model://"):
+            remainder = ref.split("://", 1)[1]
+            if "/" not in remainder:
+                return None
+            pkg_name, rel_path = remainder.split("/", 1)
+
+            # Typical ROS / robotology installation layout:
+            # .../share/<pkg_name>/...
+            share_root = next((p for p in urdf_file.parents if p.name == "share"), None)
+            if share_root is not None:
+                candidate = share_root / pkg_name / rel_path
+                if candidate.exists():
+                    return candidate
+
+            # Fallback: find an ancestor matching pkg_name.
+            pkg_root = next((p for p in urdf_file.parents if p.name == pkg_name), None)
+            if pkg_root is not None:
+                candidate = pkg_root / rel_path
+                if candidate.exists():
+                    return candidate
+
+            return None
+
+        candidate = (urdf_file.parent / ref).resolve()
+        return candidate if candidate.exists() else None
+
+    try:
+        root = ET.parse(urdf_file).getroot()
+    except Exception:
+        return None
+
+    mesh_paths: list[Path] = []
+    for mesh_el in root.findall(".//mesh"):
+        filename = mesh_el.attrib.get("filename")
+        if not filename:
+            continue
+        resolved = _resolve_mesh_reference(filename)
+        if resolved is not None:
+            mesh_paths.append(resolved)
+
+    # Prefer directly renderable mesh formats.
+    for mesh_path in mesh_paths:
+        if mesh_path.suffix.lower() in (".glb", ".gltf", ".obj", ".stl"):
+            return str(mesh_path)
+
+    # If URDF points to unsupported formats (e.g. .dae), try sibling conversions.
+    for mesh_path in mesh_paths:
+        for suffix in (".glb", ".gltf", ".obj", ".stl"):
+            candidate = mesh_path.with_suffix(suffix)
+            if candidate.exists():
+                return str(candidate)
+
     return None
+
+
+def _export_urdf_scene_glb(
+    urdf_path: str,
+    joint_values: dict[str, float] | None = None,
+    slot: int | None = None,
+) -> str:
+    """Export full URDF visual scene to GLB and return the exported path.
+
+    This allows rendering the whole robot (all links/meshes) as a single static asset
+    in Rerun, instead of showing only one mesh file.
+    """
+
+    global _ERGOCUB_SCENE_EXPORT_WARNED
+    global _ERGOCUB_URDF_MODEL
+    global _ERGOCUB_URDF_PATH
+
+    try:
+        trimesh = importlib.import_module("trimesh")
+    except Exception as exc:
+        raise RuntimeError(
+            "Missing dependency `trimesh` required for full ergoCub URDF rendering."
+        ) from exc
+
+    try:
+        yourdfpy = importlib.import_module("yourdfpy")
+        URDF = yourdfpy.URDF
+    except Exception as exc:
+        raise RuntimeError(
+            "Missing dependency `yourdfpy` required for full ergoCub URDF rendering."
+        ) from exc
+
+    try:
+        if _ERGOCUB_URDF_MODEL is None or _ERGOCUB_URDF_PATH != urdf_path:
+            _ERGOCUB_URDF_MODEL = URDF.load(urdf_path, build_scene_graph=True, load_meshes=True)
+            _ERGOCUB_URDF_PATH = urdf_path
+
+        urdf = _ERGOCUB_URDF_MODEL
+
+        if joint_values:
+            # YARP state ports are often in degrees; yourdfpy expects radians.
+            vals = {k: float(v) for k, v in joint_values.items()}
+            if any(abs(v) > 9.5 for v in vals.values()):
+                vals = {k: np.deg2rad(v) for k, v in vals.items()}
+
+            if hasattr(urdf, "actuated_joint_names") and getattr(urdf, "actuated_joint_names"):
+                cfg = [float(vals.get(name, 0.0)) for name in urdf.actuated_joint_names]
+                urdf.update_cfg(cfg)
+            else:
+                urdf.update_cfg(vals)
+
+        scene = getattr(urdf, "scene", None)
+        if scene is None:
+            raise RuntimeError("URDF scene graph is empty; unable to export full ergoCub model.")
+
+        cache_dir = Path.home() / ".cache" / "huggingface" / "lerobot" / "rerun"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        out_path = cache_dir / (f"ergocub_scene_{slot}.glb" if slot is not None else "ergocub_scene.glb")
+
+        glb_bytes = trimesh.exchange.gltf.export_glb(scene)
+        out_path.write_bytes(glb_bytes)
+        return str(out_path)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to export full URDF scene as GLB: {exc}") from exc
 
 
 def _log_ergocub_skeleton(actual_left, actual_right, target_left, target_right) -> None:
@@ -189,21 +338,78 @@ def _log_ergocub_skeleton(actual_left, actual_right, target_left, target_right) 
     rr.log("ergocub/body/target", rr.LineStrips3D(target_strips), static=False)
 
 
+def _log_ergocub_joint_states(robot: Any | None = None, controllers: dict[str, Any] | None = None) -> None:
+    """Log torso/arm/head joint scalars if controllers expose latest joint states."""
+    if controllers is None and robot is not None:
+        bus = getattr(robot, "bus", None)
+        controllers = getattr(bus, "controllers", None)
+
+    if not controllers:
+        return
+
+    for ctrl_name in ("bimanual", "head"):
+        ctrl = controllers.get(ctrl_name)
+        if ctrl is None or not hasattr(ctrl, "get_latest_joint_states"):
+            continue
+
+        joint_states = ctrl.get_latest_joint_states()
+        for joint_name, value in joint_states.items():
+            rr.log(f"ergocub/joints/{ctrl_name}/{joint_name}", rr.Scalars(float(value)))
+
+
+def _collect_ergocub_joint_states(robot: Any | None = None, controllers: dict[str, Any] | None = None) -> dict[str, float]:
+    if controllers is None and robot is not None:
+        bus = getattr(robot, "bus", None)
+        controllers = getattr(bus, "controllers", None)
+
+    if not controllers:
+        raise RuntimeError("ErgoCub joint-state visualization requires robot controllers.")
+
+    merged: dict[str, float] = {}
+    for ctrl_name in ("bimanual", "head"):
+        if ctrl_name not in controllers:
+            raise RuntimeError(f"Missing required controller '{ctrl_name}' for ErgoCub joint-state visualization.")
+
+        ctrl = controllers[ctrl_name]
+        if not hasattr(ctrl, "get_latest_joint_states"):
+            raise RuntimeError(
+                f"Controller '{ctrl_name}' must implement get_latest_joint_states() for ErgoCub model animation."
+            )
+
+        ctrl_joints = ctrl.get_latest_joint_states()
+        if not ctrl_joints:
+            raise RuntimeError(
+                f"Controller '{ctrl_name}' returned no joint states. Ensure YARP state ports are connected and readable."
+            )
+        merged.update(ctrl_joints)
+
+    return merged
+
+
 def log_rerun_data_ergocub(
     observation: RobotObservation | None = None,
     action: RobotAction | None = None,
     compress_images: bool = False,
+    robot: Any | None = None,
+    controllers: dict[str, Any] | None = None,
 ) -> None:
     """
     Logs standard observation/action streams and ErgoCub-specific 3D entities to Rerun.
 
     Adds:
-    - static ErgoCub URDF (`ergocub/model`)
+    - static ErgoCub full URDF scene (`ergocub/model`)
     - target frames from action (`ergocub/frames/target/*`)
     - actual frames from observation (`ergocub/frames/actual/*`)
+
+    Strict behavior:
+    - Raises on URDF resolution/export failures
+    - Raises if any required target/actual pose keys are missing
+    - No fallback rendering path
     """
     global _ERGOCUB_URDF_LOGGED
     global _ERGOCUB_MODEL_WARNED
+    global _ERGOCUB_SCENE_FRAME_IDX
+    global _ERGOCUB_URDF_PATH
 
     log_rerun_data(observation=observation, action=action, compress_images=compress_images)
 
@@ -224,30 +430,34 @@ def log_rerun_data_ergocub(
                 "Set ROBOT_URDF_PATH to a valid URDF file."
             )
 
-        visual_asset_path = _resolve_visual_asset_path(urdf_path)
-        if visual_asset_path is not None:
-            rr.log("ergocub/model", rr.Asset3D(path=visual_asset_path), static=True)
-        elif not _ERGOCUB_MODEL_WARNED:
-            logger.warning(
-                "Rerun cannot directly render URDF at '%s'. "
-                "Place a mesh with the same basename (.glb/.gltf/.obj/.stl) next to it to show the full robot model.",
-                urdf_path,
-            )
-            _ERGOCUB_MODEL_WARNED = True
+        # Do not log as static here; model is updated dynamically each frame below.
+        _ERGOCUB_URDF_PATH = urdf_path
         _ERGOCUB_URDF_LOGGED = True
 
-    target_left = _extract_pose_dict(action, "left_hand")
-    target_right = _extract_pose_dict(action, "right_hand")
-    actual_left = _extract_pose_dict(observation, "left_hand")
-    actual_right = _extract_pose_dict(observation, "right_hand")
+    urdf_path = _ERGOCUB_URDF_PATH
+    if not urdf_path:
+        raise RuntimeError("ErgoCub URDF path not initialized for visualization.")
 
-    if target_left is not None:
-        _log_ergocub_pose_frame("ergocub/frames/target/left_hand", target_left)
-    if target_right is not None:
-        _log_ergocub_pose_frame("ergocub/frames/target/right_hand", target_right)
-    if actual_left is not None:
-        _log_ergocub_pose_frame("ergocub/frames/actual/left_hand", actual_left)
-    if actual_right is not None:
-        _log_ergocub_pose_frame("ergocub/frames/actual/right_hand", actual_right)
+    joint_states = _collect_ergocub_joint_states(robot=robot, controllers=controllers)
+    _log_ergocub_joint_states(robot=robot, controllers=controllers)
 
+    visual_asset_path = _export_urdf_scene_glb(
+        urdf_path,
+        joint_values=joint_states,
+        slot=_ERGOCUB_SCENE_FRAME_IDX,
+    )
+    _ERGOCUB_SCENE_FRAME_IDX += 1
+    rr.log("ergocub/model", rr.Asset3D(path=visual_asset_path), static=False)
+
+    target_left = _require_pose_dict(action, "left_hand", "target(action)")
+    target_right = _require_pose_dict(action, "right_hand", "target(action)")
+    actual_left = _require_pose_dict(observation, "left_hand", "actual(observation)")
+    actual_right = _require_pose_dict(observation, "right_hand", "actual(observation)")
+
+    _log_ergocub_pose_frame("ergocub/frames/target/left_hand", target_left)
+    _log_ergocub_pose_frame("ergocub/frames/target/right_hand", target_right)
+    _log_ergocub_pose_frame("ergocub/frames/actual/left_hand", actual_left)
+    _log_ergocub_pose_frame("ergocub/frames/actual/right_hand", actual_right)
+
+    _log_ergocub_joint_states(robot=robot, controllers=controllers)
     _log_ergocub_skeleton(actual_left, actual_right, target_left, target_right)
