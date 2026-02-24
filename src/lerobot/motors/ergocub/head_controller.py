@@ -52,7 +52,8 @@ class ErgoCubHeadController:
         self._is_connected = False
         
         # YARP ports
-        self.neck_cmd_port = yarp.RpcClient()
+        # Command output port
+        self.neck_cmd_port = yarp.BufferedPortBottle()
         self.encoders_port = yarp.BufferedPortVector()
         self.torso_encoders_port = yarp.BufferedPortVector()
         self._latest_torso_encoders: list[float] | None = None
@@ -79,10 +80,10 @@ class ErgoCubHeadController:
         if self.is_connected:
             raise DeviceAlreadyConnectedError("ErgoCubNeckController already connected")
         
-        # Open RPC port for neck orientation commands
+        # Open command port for neck orientation commands
         neck_cmd_local = f"{self.local_prefix}/neck/rpc:o"
         if not self.neck_cmd_port.open(neck_cmd_local):
-            raise ConnectionError(f"Failed to open neck RPC port {neck_cmd_local}")
+            raise ConnectionError(f"Failed to open neck command port {neck_cmd_local}")
         
         # Connect directly to head controller RPC port
         neck_cmd_remote = "/mc-ergocub-head-controller/rpc:i"
@@ -202,16 +203,16 @@ class ErgoCubHeadController:
         
         rot_matrix = rotation_6d_to_matrix(torch.tensor(pose_6d)).numpy().flatten()
         
-        # Send RPC command to head controller
-        neck_cmd = yarp.Bottle()
+        # Send command through output port
+        neck_cmd = self.neck_cmd_port.prepare()
+        neck_cmd.clear()
         neck_cmd.addString("setOrientationFlat")
-        
+
         # Add rotation matrix as nested bottle
         for i in range(9):
             neck_cmd.addFloat64(rot_matrix[i])
-        
-        reply = yarp.Bottle()
-        self.neck_cmd_port.write(neck_cmd, reply)
+
+        self.neck_cmd_port.write()
 
     def send_commands(self, commands: dict[str, float]) -> None:
         """Send commands from dict format."""
@@ -223,11 +224,11 @@ class ErgoCubHeadController:
 
     def reset(self) -> None:
         """Reset the bimanual controller"""
-        right_cmd = yarp.Bottle()
+        right_cmd = self.neck_cmd_port.prepare()
+        right_cmd.clear()
         right_cmd.addString("goHome")
-        
-        reply = yarp.Bottle()
-        self.neck_cmd_port.write(right_cmd, reply)
+
+        self.neck_cmd_port.write()
 
     @property
     def motor_features(self) -> dict[str, type]:
