@@ -1,0 +1,14 @@
+robot:
+  type: ergocub
+  remote_prefix: /ergocubSim
+  local_prefix: /lerobot
+  cameras:
+    egocentric:
+      type: yarp
+      yarp_name: ergocubSim/depthCamera/rgbImage:o
+      width: 640
+      height: 480
+      fps: 30
+  control_boards: [bimanual, head, fingers]
+  state_boards: [bimanual, head, fingers]
+  position_tolerance: 0.2
