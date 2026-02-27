@@ -33,7 +33,7 @@
     {
       "label": "clear-test",
       "type": "shell",
-      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/ar0s/eval_redball_sim",
+      "command": "rm -rf /home/panda-admin/.cache/huggingface/lerobot/ar0s/eval_pick-turtle",
       "options": {
         "cwd": "${workspaceFolder}"
       },

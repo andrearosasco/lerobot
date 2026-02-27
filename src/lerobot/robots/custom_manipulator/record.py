@@ -270,9 +270,10 @@ def record_loop(
 @dataclass
 class DatasetRecordConfig:
     # Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).
-    repo_id: str = "ar0s/pick-turtle-robotiq"
+    # repo_id: str = "ar0s/eval_pick-turtle-robotiq"
+    repo_id: str = "ar0s/7_trial"
     # A short but accurate description of the task performed during the recording
-    single_task: str = "Pick up the turtle and place it in the box"
+    single_task: str = "Pick up the cubes and place them in the corresponding colored cups"
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
     root: str | Path | None = None
     # Limit the frames per second.
@@ -282,7 +283,7 @@ class DatasetRecordConfig:
     # Number of seconds for resetting the environment after each episode.
     reset_time_s: int | float = 0
     # Number of episodes to record.
-    num_episodes: int = 2
+    num_episodes: int = 1
     # Encode frames in the dataset into video
     video: bool = True
     # Upload dataset to Hugging Face hub.
@@ -311,7 +312,7 @@ class PolicyConfig(DiffusionConfig):
     resize_shape: List[int] = field(default_factory=lambda: [120, 160])
     noise_scheduler_type: str = "DDIM"
     num_inference_steps: int = 10
-    pretrained_path: str = "/home/panda-admin/users/arosasco/lerobot-panda/lerobot/checkpoints/dp-pick-turtle_old/checkpoints/last/pretrained_model"
+    pretrained_path: str = "/home/panda-admin/users/arosasco/lerobot-panda/lerobot/checkpoints/dp-pick-turtle-robotiq/checkpoints/last/pretrained_model"
     
 
 @dataclass
@@ -326,13 +327,13 @@ class RecordConfig:
             }
         )
     )
-    policy: PreTrainedConfig | None = None # field(default_factory=PolicyConfig)
+    policy: PreTrainedConfig | None = None #field(default_factory=PolicyConfig) #None
     teleop: MetaQuestRailConfig =  field(default_factory=MetaQuestRailConfig) 
     dataset: DatasetRecordConfig = field(default_factory=DatasetRecordConfig)
     
     display_data: bool = True
     play_sounds: bool = True
-    resume: bool = True
+    resume: bool = False
 
 
     def __post_init__(self):

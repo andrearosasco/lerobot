@@ -1,9 +1,12 @@
 import time
 import numpy as np
 import rclpy
-import roboticstoolbox as rtb
+import os
+import pinocchio as pin
+from pink import Configuration
+from pink.solve_ik import solve_ik
+from pink.tasks import FrameTask
 from scipy.spatial.transform import Rotation as R
-from spatialmath import SE3
 from rclpy.node import Node
 from panda_interface.srv import ApplyCommands, Connect, GetSensors, Close
 from panda_interface.msg import PandaCommand
@@ -70,12 +73,35 @@ class Panda(Node):
     def __init__(self, config: PandaConfig = None, **kwargs):
         super().__init__('panda_client')
         self.config = config if config else PandaConfig()
-        self.robot_model = rtb.models.Panda()
+        self._pin_model = None
+        self._pin_data = None
+        self._ik_task = None
+        self._ee_frame_id = None
 
         self.client_names = {}
         for name, type in Panda.interfaces.items():
             client = self.create_client(type, name)
             self.client_names[name] = client
+
+    def _ensure_kinematics(self):
+        if self._pin_model is not None:
+            return
+
+        from roboticstoolbox.tools import xacro
+        from roboticstoolbox.tools.data import rtb_path_to_datafile
+
+        base = os.path.join(rtb_path_to_datafile("xacro"), "franka_description")
+        xml = xacro.main(os.path.join(base, "robots/panda_arm_hand.urdf.xacro"), tld_other=base)
+        full = pin.buildModelFromXML(xml)
+
+        q0 = pin.neutral(full)
+        q0[-2:] = 0.04
+        jids = [full.getJointId("panda_finger_joint1"), full.getJointId("panda_finger_joint2")]
+        self._pin_model = pin.buildReducedModel(full, jids, q0)
+        self._pin_data = self._pin_model.createData()
+        ee_frame = "panda_hand"
+        self._ee_frame_id = self._pin_model.getFrameId(ee_frame)
+        self._ik_task = FrameTask(ee_frame, position_cost=1.0, orientation_cost=1.0)
 
     def connect(self):
         for name, client in self.client_names.items():
@@ -136,9 +162,12 @@ class Panda(Node):
         
         q = np.array(state.position)
 
-        Te = self.robot_model.fkine(q)
-        pos = Te.t
-        rot_matrix = Te.R
+        self._ensure_kinematics()
+        pin.forwardKinematics(self._pin_model, self._pin_data, q)
+        pin.updateFramePlacements(self._pin_model, self._pin_data)
+        oMf = self._pin_data.oMf[self._ee_frame_id]
+        pos = oMf.translation
+        rot_matrix = oMf.rotation
         rot_axis_angle = R.from_matrix(rot_matrix).as_rotvec()
 
         pos = {f"position.{k}": v for k,v in zip(["x", "y", "z"], pos)}
@@ -147,9 +176,14 @@ class Panda(Node):
         return {**pos, **ori}
 
     def compute_ik(self, position, orientation, q_seed=None):
-        Tep = SE3.Rt(R=orientation, t=position)
-        sol = self.robot_model.ik_LM(Tep, q0=q_seed)
-        return sol[0]
+        self._ensure_kinematics()
+        q_seed = np.zeros(self._pin_model.nq) if q_seed is None else np.asarray(q_seed)
+        cfg = Configuration(self._pin_model, self._pin_data, q_seed, copy_data=True, forward_kinematics=True)
+        self._ik_task.set_target(pin.SE3(orientation, position))
+        for _ in range(5):
+            v = solve_ik(cfg, [self._ik_task], dt=0.1, solver="osqp")
+            cfg.integrate_inplace(v, 0.1)
+        return cfg.q
 
     def close(self):
         pass

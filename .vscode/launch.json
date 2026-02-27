@@ -2,6 +2,15 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Python Debugger: Current File",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "preLaunchTask": "clear-test",
+      "justMyCode": false
+    },
+    {
       "name": "Test",
       "type": "debugpy",
       "request": "launch",
@@ -28,8 +37,7 @@
         "--dataset.reset_time=0",
         "--dataset.episode_time=10",
       ]
-    }
-    ,
+    },
     {
       "name": "Train (DP)",
       "type": "debugpy",
@@ -53,8 +61,7 @@
         "--policy.device=cuda",
         "--output_dir=checkpoints/redball"
       ]
-    }
-    ,
+    },
     {
       "name": "Record",
       "type": "debugpy",
@@ -84,26 +91,12 @@
       "name": "Record Real",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_record.py",
+      "program": "${workspaceFolder}/src/lerobot/robots/custom_manipulator/record.py",
       "console": "integratedTerminal",
       "env": {
         "PYTHONPATH": "${workspaceFolder}/src"
       },
-      "preLaunchTask": "clear-record",
-      "args": [
-        "--robot.type=ergocub",
-        "--robot.remote_prefix=/ergocub",
-        "--robot.local_prefix=/lerobot",
-        "--robot.cameras={ external: {\"type\": \"yarp\", \"yarp_name\": \"depthCamera/rgbImage:o\", \"width\": 1280, \"height\": 720, \"fps\": 30}}",
-        "--robot.control_boards=[head,left_hand,right_hand,fingers,torso]",
-        "--teleop.type=metaquest",
-        "--dataset.repo_id=steb6/redball_real",
-        "--dataset.num_episodes=50",
-        "--dataset.fps=10",
-        "--dataset.reset_time=3",
-        "--dataset.episode_time=10",
-        "--dataset.single_task=get the ball"
-      ]
+      "preLaunchTask": "clear-record"
     }
   ]
 }
