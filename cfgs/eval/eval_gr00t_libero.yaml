@@ -1,0 +1,22 @@
+output_dir: data/eval_logs/
+seed: 0
+
+# Remap env obs keys -> policy keys
+rename_map:
+  observation.images.image: "pixels/agentview_image"
+  observation.images.image2: "pixels/robot0_eye_in_hand_image"
+
+env:
+  type: libero
+  task: libero_object,libero_goal,libero_10,libero_spatial
+  max_parallel_tasks: 1
+
+eval:
+  batch_size: 1
+  n_episodes: 10
+  use_async_envs: False
+
+policy:
+  type: groot
+  pretrained_path: aractingi/groot-libero-lerobot
+  device: "cuda:0"

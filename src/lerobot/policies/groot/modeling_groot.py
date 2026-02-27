@@ -37,9 +37,12 @@ import os
 from collections import deque
 from pathlib import Path
 from typing import TypeVar
+import math
 
 import torch
 from torch import Tensor
+from torch import nn
+import torch.nn.functional as F
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.groot.configuration_groot import GrootConfig
@@ -48,6 +51,21 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 
 T = TypeVar("T", bound="GrootPolicy")
+
+
+class _GradReverseFn(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x: Tensor, lambd: float) -> Tensor:  # type: ignore[override]
+        ctx.lambd = float(lambd)
+        return x.view_as(x)
+
+    @staticmethod
+    def backward(ctx, grad_output: Tensor):  # type: ignore[override]
+        return -ctx.lambd * grad_output, None
+
+
+def _grad_reverse(x: Tensor, lambd: float) -> Tensor:
+    return _GradReverseFn.apply(x, float(lambd))
 
 
 class GrootPolicy(PreTrainedPolicy):
@@ -64,6 +82,12 @@ class GrootPolicy(PreTrainedPolicy):
 
         # Initialize GR00T model using ported components
         self._groot_model = self._create_groot_model()
+
+        # Optional DANN head (domain classifier + GRL)
+        self._dann_step = 0
+        self._domain_head: nn.Module | None = None
+        if getattr(self.config, "use_dann", False):
+            self._domain_head = self._build_domain_head()
 
         self.reset()
 
@@ -222,7 +246,64 @@ class GrootPolicy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
+    def _build_domain_head(self) -> nn.Module:
+        # Best-effort: infer backbone projection dim (defaults to 1536).
+        feat_dim = 1536
+        try:
+            eagle_linear = getattr(self._groot_model.backbone, "eagle_linear", None)
+            if isinstance(eagle_linear, nn.Linear):
+                feat_dim = int(eagle_linear.out_features)
+        except Exception:
+            feat_dim = 1536
+
+        hidden = int(getattr(self.config, "dann_hidden_dim", 256))
+        p = float(getattr(self.config, "dann_dropout", 0.0))
+        out_dim = int(getattr(self.config, "dann_num_domains", 2))
+        return nn.Sequential(
+            nn.Linear(feat_dim, hidden),
+            nn.ReLU(),
+            nn.Dropout(p) if p > 0 else nn.Identity(),
+            nn.Linear(hidden, out_dim),
+        )
+
+    def _masked_mean_pool(self, feats: Tensor, mask: Tensor | None) -> Tensor:
+        # feats: (B, T, D), mask: (B, T)
+        if mask is None:
+            return feats.mean(dim=1)
+        if mask.dtype != torch.float32:
+            mask_f = mask.to(dtype=torch.float32)
+        else:
+            mask_f = mask
+        if mask_f.dim() == 3 and mask_f.shape[-1] == 1:
+            mask_f = mask_f.squeeze(-1)
+        mask_f = mask_f.clamp(min=0.0, max=1.0)
+        denom = mask_f.sum(dim=1, keepdim=True).clamp(min=1.0)
+        pooled = (feats * mask_f.unsqueeze(-1)).sum(dim=1) / denom
+        return pooled
+
+    def _dann_lambda(self) -> float:
+        # DANN schedule: lambda(p)=2/(1+exp(-gamma*p)) - 1, scaled by lambda_max
+        total = int(getattr(self.config, "dann_total_steps", 100_000))
+        gamma = float(getattr(self.config, "dann_gamma", 10.0))
+        lam_max = float(getattr(self.config, "dann_lambda_max", 1.0))
+        if total <= 0:
+            return lam_max
+        p = float(min(max(self._dann_step / float(total), 0.0), 1.0))
+        lam = 2.0 / (1.0 + math.exp(-gamma * p)) - 1.0
+        return lam_max * float(lam)
+
+    def _select_batch(self, data: dict, idx: Tensor) -> dict:
+        # Select along batch dimension for any tensors with matching leading dim.
+        out: dict = {}
+        for k, v in data.items():
+            if isinstance(v, torch.Tensor) and v.shape[0] == idx.shape[0]:
+                # idx is assumed to be a 1D index tensor over batch dimension.
+                out[k] = v.index_select(0, idx)
+            else:
+                out[k] = v
+        return out
+
+    def forward(self, batch: dict[str, Tensor], **kwargs) -> tuple[Tensor, dict]:
         """Training forward pass.
 
         Delegates to Isaac-GR00T model.forward when inputs are compatible.
@@ -238,15 +319,84 @@ class GrootPolicy(PreTrainedPolicy):
         # Get device from model parameters
         device = next(self.parameters()).device
 
-        # Run GR00T forward under bf16 autocast when enabled to reduce activation memory
-        # Rationale: Matches original GR00T finetuning (bf16 compute, fp32 params) and avoids fp32 upcasts.
+        use_dann = bool(getattr(self.config, "use_dann", False))
+        domain_key = str(getattr(self.config, "dann_domain_key", "domain_id"))
+        domain_id = batch.get(domain_key)
+        if domain_id is None and domain_key != "domain_id":
+            domain_id = batch.get("domain_id")
+
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=self.config.use_bf16):
-            outputs = self._groot_model.forward(groot_inputs)
+            if not use_dann or domain_id is None or self._domain_head is None:
+                outputs = self._groot_model.forward(groot_inputs)
+                loss = outputs.get("loss")
+                loss_dict = {"loss": float(loss.item())}
+                return loss, loss_dict
 
-        # Isaac-GR00T returns a BatchFeature; loss key is typically 'loss'
-        loss = outputs.get("loss")
+            # DANN path: compute task loss on source only + domain loss on all.
+            if domain_id.dim() > 1:
+                domain_labels = domain_id.view(-1).to(device=device, dtype=torch.long)
+            else:
+                domain_labels = domain_id.to(device=device, dtype=torch.long)
 
-        loss_dict = {"loss": loss.item()}
+            # Forward backbone once on full batch
+            backbone_inputs = self._groot_model.backbone.prepare_input(groot_inputs)
+            backbone_outputs = self._groot_model.backbone(backbone_inputs)
+
+            # Domain classifier on features AFTER the VLM→DiT bridge.
+            # Rationale: GR00T finetuning often freezes the VLM; the bridge transformer lives in
+            # FlowmatchingActionHead.process_backbone_output() (vLLN + vl_self_attention).
+            bridge_outputs = {k: v for k, v in backbone_outputs.items()}
+            bridge_outputs = self._groot_model.action_head.process_backbone_output(bridge_outputs)
+            feats = bridge_outputs.get("backbone_features")
+            mask = bridge_outputs.get("backbone_attention_mask")
+            pooled = self._masked_mean_pool(feats, mask)
+
+            if self.training:
+                self._dann_step += 1
+            lambd = self._dann_lambda()
+            rev = _grad_reverse(pooled, lambd)
+            logits = self._domain_head(rev)
+            domain_loss = F.cross_entropy(logits, domain_labels)
+
+            # Task loss computed only on source domain samples
+            task_domain_val = int(getattr(self.config, "dann_task_domain", 0))
+            source_mask = domain_labels == task_domain_val
+            if bool(source_mask.any()):
+                src_idx = source_mask.nonzero(as_tuple=False).view(-1)
+
+                # Prepare action inputs and select source entries
+                action_inputs = self._groot_model.action_head.prepare_input(groot_inputs)
+                src_backbone = {
+                    k: (
+                        v.index_select(0, src_idx)
+                        if isinstance(v, torch.Tensor) and v.shape[0] == feats.shape[0]
+                        else v
+                    )
+                    for k, v in backbone_outputs.items()
+                }
+                src_action = {
+                    k: (
+                        v.index_select(0, src_idx)
+                        if isinstance(v, torch.Tensor) and v.shape[0] == feats.shape[0]
+                        else v
+                    )
+                    for k, v in action_inputs.items()
+                }
+
+                task_out = self._groot_model.action_head(src_backbone, src_action)
+                task_loss = task_out.get("loss")
+            else:
+                task_loss = torch.zeros((), device=device, dtype=torch.float32)
+
+            loss = task_loss + domain_loss
+
+        loss_dict = {
+            "loss": float(loss.item()),
+            "task_loss": float(task_loss.item()),
+            "domain_loss": float(domain_loss.item()),
+            "dann_lambda": float(lambd),
+            "source_frac": float((domain_labels == int(getattr(self.config, "dann_task_domain", 0))).float().mean().item()),
+        }
 
         return loss, loss_dict
 

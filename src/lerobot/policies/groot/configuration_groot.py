@@ -108,6 +108,28 @@ class GrootConfig(PreTrainedConfig):
     # Whether to sample trajectories weighted by their length
     balance_trajectory_weights: bool = True
 
+    # -----------------
+    # DANN (Domain-Adversarial) training
+    # -----------------
+    # When enabled, the policy adds a domain-classifier head with Gradient Reversal (GRL)
+    # and optimizes: task_loss(source) + lambda * domain_loss(source+target).
+    use_dann: bool = False
+    # Batch key that stores per-sample domain labels (0=source, 1=target by convention).
+    dann_domain_key: str = "domain_id"
+    dann_num_domains: int = 2
+    # Domain value for which task loss is computed (typically 0 for source).
+    dann_task_domain: int = 0
+
+    # GRL lambda schedule (DANN-style): lambda(p) = (2/(1+exp(-gamma*p)) - 1) * lambda_max.
+    # p is training progress in [0, 1]. Keep dann_total_steps aligned with TrainPipelineConfig.steps.
+    dann_lambda_max: float = 1.0
+    dann_gamma: float = 10.0
+    dann_total_steps: int = 100_000
+
+    # Domain head MLP size
+    dann_hidden_dim: int = 256
+    dann_dropout: float = 0.0
+
     # Optional dataset paths for delegating training to Isaac-GR00T runner
     dataset_paths: list[str] | None = None
     output_dir: str = "./tmp/gr00t"

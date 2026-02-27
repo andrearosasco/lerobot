@@ -1,0 +1,23 @@
+# train_groot_libero10.yaml
+
+# output_dir: ./outputs/
+steps: 100000
+batch_size: 8
+num_workers: 10
+
+env:
+  type: libero
+  task: libero_10
+
+dataset:
+  repo_id: HuggingFaceVLA/libero
+
+eval:
+  batch_size: 1
+  n_episodes: 1
+
+policy:
+  type: groot
+  repo_id: ar0s/groot_libero_10
+  push_to_hub: true
+  tune_diffusion_model: false

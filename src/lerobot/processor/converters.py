@@ -173,7 +173,21 @@ def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
     task_index_key = {"task_index": batch["task_index"]} if "task_index" in batch else {}
     episode_index_key = {"episode_index": batch["episode_index"]} if "episode_index" in batch else {}
 
-    return {**pad_keys, **task_key, **subtask_key, **index_key, **task_index_key, **episode_index_key}
+    # Optional keys that some datasets/pipelines provide.
+    # Keep them in complementary_data so they survive batch_to_transition -> processors -> transition_to_batch.
+    dataset_index_key = {"dataset_index": batch["dataset_index"]} if "dataset_index" in batch else {}
+    domain_id_key = {"domain_id": batch["domain_id"]} if "domain_id" in batch else {}
+
+    return {
+        **pad_keys,
+        **task_key,
+        **subtask_key,
+        **index_key,
+        **task_index_key,
+        **episode_index_key,
+        **dataset_index_key,
+        **domain_id_key,
+    }
 
 
 def create_transition(
