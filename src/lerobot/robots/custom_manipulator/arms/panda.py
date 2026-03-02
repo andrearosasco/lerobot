@@ -2,10 +2,11 @@ import time
 import numpy as np
 import rclpy
 import os
+os.environ.setdefault("OSQP_ALGEBRA_BACKEND", "builtin")
 import pinocchio as pin
 from pink import Configuration
 from pink.solve_ik import solve_ik
-from pink.tasks import FrameTask
+from pink.tasks import FrameTask, PostureTask
 from scipy.spatial.transform import Rotation as R
 from rclpy.node import Node
 from panda_interface.srv import ApplyCommands, Connect, GetSensors, Close
@@ -76,7 +77,9 @@ class Panda(Node):
         self._pin_model = None
         self._pin_data = None
         self._ik_task = None
+        self._posture_task = None
         self._ee_frame_id = None
+        self._q_nom = None
 
         self.client_names = {}
         for name, type in Panda.interfaces.items():
@@ -102,6 +105,7 @@ class Panda(Node):
         ee_frame = "panda_hand"
         self._ee_frame_id = self._pin_model.getFrameId(ee_frame)
         self._ik_task = FrameTask(ee_frame, position_cost=1.0, orientation_cost=1.0)
+        self._posture_task = PostureTask(cost=0.05, gain=0.1)
 
     def connect(self):
         for name, client in self.client_names.items():
@@ -177,11 +181,28 @@ class Panda(Node):
 
     def compute_ik(self, position, orientation, q_seed=None):
         self._ensure_kinematics()
-        q_seed = np.zeros(self._pin_model.nq) if q_seed is None else np.asarray(q_seed)
+        if q_seed is None:
+            eps = 1e-6
+            q_seed = np.clip(
+                np.zeros(self._pin_model.nq),
+                self._pin_model.lowerPositionLimit + eps,
+                self._pin_model.upperPositionLimit - eps,
+            )
+        q_seed = np.asarray(q_seed)
+        if self._q_nom is None:
+            self._q_nom = q_seed.copy()
         cfg = Configuration(self._pin_model, self._pin_data, q_seed, copy_data=True, forward_kinematics=True)
         self._ik_task.set_target(pin.SE3(orientation, position))
+        self._posture_task.set_target(self._q_nom)
         for _ in range(5):
-            v = solve_ik(cfg, [self._ik_task], dt=0.1, solver="osqp")
+            v = solve_ik(
+                cfg,
+                [self._ik_task, self._posture_task],
+                dt=0.1,
+                solver="proxqp",
+                damping=1,
+                safety_break=False,
+            )
             cfg.integrate_inplace(v, 0.1)
         return cfg.q
 
