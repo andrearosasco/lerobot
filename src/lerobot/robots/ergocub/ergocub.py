@@ -40,8 +40,12 @@ class ErgoCub(Robot):
     
     def __init__(self, config: ErgoCubConfig):
         super().__init__(config)
+
+        if isinstance(config, str):
+            config = ErgoCubConfig.from_yaml("config/r1_conf.yaml")
+
         # Set YARP robot name for resource finding
-        os.environ["YARP_ROBOT_NAME"] = "ergoCubSN002"
+        os.environ["YARP_ROBOT_NAME"] = config.yarp_robot_name
 
         self.config = config
         self.session_id = uuid.uuid4()
@@ -59,7 +63,7 @@ class ErgoCub(Robot):
         # Emotions RPC support
         self._emotion_cmd_port = yarp.Port()
         self._emotion_local_port_name: str | None = None
-        self._emotion_remote_port_name = "/ergoCubEmotions/rpc"
+        self._emotion_remote_port_name = config.emotion_remote_port_name
         self._last_emotion_label: str | None = None
         self._emotion_map = {
             0: "neutral",
@@ -370,3 +374,4 @@ class ErgoCub(Robot):
         Returns action features in SO100-like format with dot notation.
         """
         return self._action_ft  # Actions and observations have the same structure
+

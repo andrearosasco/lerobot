@@ -16,6 +16,7 @@
 
 from dataclasses import dataclass, field
 from typing import List
+import yaml
 
 from lerobot.cameras import CameraConfig
 from lerobot.robots.config import RobotConfig
@@ -45,3 +46,50 @@ class ErgoCubConfig(RobotConfig):
     absolute: bool = True
     finger_scale: float = 1.0
     position_tolerance: float = 0.1  # Tolerance for safety checks, in radians or meters depending on the joint
+    yarp_robot_name: str = "ergoCubSN002"
+    emotion_remote_port_name: str = "/ergoCubEmotions/rpc"
+
+    @classmethod
+    def from_yaml(cls, path: str) -> "ErgoCubConfig":
+        with open(path, "r") as f:
+            data = yaml.safe_load(f)
+
+        # Parsing cameras
+        # cameras = {}
+        # for cam_name, cam_data in data.get("cameras", {}).items():
+        #     cameras[cam_name] = CameraConfig(
+        #         resolution=cam_data.get("resolution", [640, 480]),
+        #         fps=cam_data.get("fps", 30),
+        #         use_depth=cam_data.get("use_depth", False),
+        #     )
+
+        return ErgoCubConfig(
+            name=data.get("name", "ergocub"),
+            remote_prefix=data.get("remote_prefix", "/ergocubSim"),
+            local_prefix=data.get("local_prefix", "/ergocub_dashboard"),
+            # cameras=data.get("cameras", {}),
+            control_boards=data.get(
+                "control_boards", ["head", "bimanual", "fingers"]
+            ),
+            state_boards=data.get(
+                "state_boards", ["head", "bimanual", "fingers"]
+            ),
+            left_hand=data.get("left_hand", True),
+            right_hand=data.get("right_hand", True),
+            absolute=data.get("absolute", True),
+            finger_scale=data.get("finger_scale", 1.0),
+            position_tolerance=data.get("position_tolerance", 0.1),
+            yarp_robot_name=data.get("yarp_robot_name", "ergoCubSN002"),
+        )
+
+
+# if __name__ == "__main__":
+#     # Percorso del file YAML di esempio
+#     yaml_path = "config/r1_conf.yaml"
+
+#     # Caricare la configurazione dal file YAML
+#     config = ErgoCubConfig.from_yaml(yaml_path)
+
+#     # Stampare la configurazione caricata per verificarne il contenuto
+#     print("Configurazione caricata:")
+#     print(config)

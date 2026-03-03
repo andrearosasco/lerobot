@@ -1,0 +1,27 @@
+name: ergocub
+remote_prefix: "/ergocubSim"
+local_prefix: "/ergocub_dashboard"
+cameras:
+  left_camera:
+    resolution: [640, 480]
+    fps: 30
+    use_depth: true
+  right_camera:
+    resolution: [640, 480]
+    fps: 30
+    use_depth: false
+control_boards:
+  - head
+  - bimanual
+  - fingers
+state_boards:
+  - head
+  - bimanual
+  - fingers
+left_hand: true
+right_hand: true
+absolute: true
+finger_scale: 1.0
+position_tolerance: 0.1
+yarp_robot_name: "erergoCubSN002"
+emotion_remote_port_name: "/ergoCubEmotions/rpc"
