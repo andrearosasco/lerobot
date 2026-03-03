@@ -74,11 +74,6 @@ from pathlib import Path
 from pprint import pformat
 from typing import Any
 
-try:
-    import yarp
-except ImportError:
-    yarp = None
-
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
 )
@@ -302,7 +297,6 @@ def record_loop(
     policy: PreTrainedPolicy | None = None,
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None,
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None,
-    reset_port: Any | None = None,
     control_time_s: int | None = None,
     single_task: str | None = None,
     display_data: bool = False,
@@ -351,17 +345,6 @@ def record_loop(
         if events["exit_early"]:
             events["exit_early"] = False
             break
-
-        if reset_port is not None:
-            reset_cmd = reset_port.read(False)
-            if reset_cmd is not None:
-                logging.info("Received reset command on /reset: resetting robot and policy state.")
-                robot.reset()
-                if policy is not None and preprocessor is not None and postprocessor is not None:
-                    policy.reset()
-                    preprocessor.reset()
-                    postprocessor.reset()
-                continue
 
         # Get robot observation
         obs = robot.get_observation()
@@ -479,7 +462,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     dataset = None
     listener = None
-    reset_port = None
 
     try:
         if cfg.resume:
@@ -537,15 +519,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         if teleop is not None:
             teleop.connect()
 
-        if robot.name == "ergocub" and yarp is not None:
-            yarp.Network.init()
-            reset_port = yarp.BufferedPortBottle()
-            if not reset_port.open("/reset"):
-                raise RuntimeError("Failed to open YARP reset port '/reset'.")
-            logging.info("Listening for reset commands on YARP port /reset")
-        elif robot.name == "ergocub" and yarp is None:
-            logging.warning("YARP Python bindings are unavailable; /reset listener is disabled.")
-
         listener, events = init_keyboard_listener()
 
         if not cfg.dataset.streaming_encoding:
@@ -568,7 +541,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     policy=policy,
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
-                    reset_port=reset_port,
                     dataset=dataset,
                     control_time_s=cfg.dataset.episode_time_s,
                     single_task=cfg.dataset.single_task,
@@ -595,7 +567,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                         robot_action_processor=robot_action_processor,
                         robot_observation_processor=robot_observation_processor,
                         teleop=teleop,
-                        reset_port=reset_port,
                         control_time_s=cfg.dataset.reset_time_s,
                         single_task=cfg.dataset.single_task,
                         display_data=cfg.display_data,
@@ -615,9 +586,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
         if dataset:
             dataset.finalize()
-
-        if reset_port is not None:
-            reset_port.close()
 
         if robot.is_connected:
             robot.disconnect()

@@ -67,6 +67,11 @@ class ErgoCub(Robot):
             2: "alert",
             3: "shy",
         }
+
+        # Reset event output support. Each reset() can publish a notification to /reset.
+        self._reset_evt_port = yarp.Port()
+        self._reset_evt_local_port_name: str | None = None
+        self._reset_evt_remote_port_name = "/reset"
         
 
         yarp.Network.init()
@@ -114,6 +119,10 @@ class ErgoCub(Robot):
                 print("ergoCubEmotions: waiting for connection")
                 time.sleep(1)
 
+        self._reset_evt_local_port_name = f"{self.config.local_prefix}/{self.session_id}/reset:o"
+        if not self._reset_evt_port.open(self._reset_evt_local_port_name):
+            raise ConnectionError(f"Failed to open reset event port {self._reset_evt_local_port_name}")
+
         self._is_connected = True
 
         # New connection: require safety handshake again.
@@ -145,6 +154,9 @@ class ErgoCub(Robot):
 
         if self._emotion_cmd_port is not None:
             self._emotion_cmd_port.close()
+
+        if self._reset_evt_port is not None:
+            self._reset_evt_port.close()
 
         self._is_connected = False
         
@@ -257,6 +269,17 @@ class ErgoCub(Robot):
 
         self._last_emotion_label = emotion_label
     
+    def _publish_reset_event(self) -> None:
+        if self._reset_evt_local_port_name is None:
+            return
+
+        if not yarp.Network.isConnected(self._reset_evt_local_port_name, self._reset_evt_remote_port_name):
+            yarp.Network.connect(self._reset_evt_local_port_name, self._reset_evt_remote_port_name)
+
+        cmd = yarp.Bottle()
+        cmd.addString("reset")
+        self._reset_evt_port.write(cmd)
+
     def reset(self) -> None:
         """Reset the robot to a default state."""
         if not self.is_connected:
@@ -269,6 +292,9 @@ class ErgoCub(Robot):
         # Reset motor bus (hands and head)
         self.bus.reset()
         self.acc_state = self.bus.read_state()
+
+        self._publish_reset_event()
+
         logger.info("%s has been reset.", self)
 
     # ---------------------------------------------------------------------
