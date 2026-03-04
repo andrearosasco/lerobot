@@ -1,0 +1,26 @@
+# Train GR00T with DANN on merged source+target dataset.
+# Dataset is expected to contain per-frame `domain_id` with 0=source, 1=target.
+
+output_dir: checkpoints/groot_redball_sim_reactive_dann
+
+dataset:
+  repo_id: ar0s/redball_sim_reactive_dann
+  image_transforms:
+    enable: true
+
+policy:
+  type: groot
+
+  # Change this to your destination model repo before training.
+  repo_id: ar0s/groot_redball_dann
+  push_to_hub: true
+
+  # Non-default GR00T settings from your run config.
+  chunk_size: 16
+  n_action_steps: 16
+  max_action_dim: 36
+  base_model_path: steb6/GROOT-N1.5-3B-head36
+  device: cuda:1
+
+  # DANN settings
+  use_dann: true

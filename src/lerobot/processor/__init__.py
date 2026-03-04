@@ -74,6 +74,7 @@ from .policy_robot_bridge import (
     PolicyActionToRobotActionProcessorStep,
     RobotActionToPolicyActionProcessorStep,
 )
+from .red_hue_processor import apply_red_hue
 from .rename_processor import RenameObservationsProcessorStep
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 
@@ -125,6 +126,7 @@ __all__ = [
     "Torch2NumpyActionProcessorStep",
     "RobotActionToPolicyActionProcessorStep",
     "PolicyActionToRobotActionProcessorStep",
+    "apply_red_hue",
     "transition_to_batch",
     "TransitionKey",
     "TruncatedProcessorStep",
