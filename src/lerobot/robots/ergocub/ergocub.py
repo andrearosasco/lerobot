@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 class ErgoCub(Robot):
     config_class = ErgoCubConfig
     name = "ergocub"
-    
+
     def __init__(self, config: ErgoCubConfig):
         super().__init__(config)
         # Set YARP robot name for resource finding
@@ -68,11 +68,10 @@ class ErgoCub(Robot):
             3: "shy",
         }
 
-        # Reset event output support. Each reset() can publish a notification to /reset.
-        self._reset_evt_port = yarp.Port()
-        self._reset_evt_local_port_name: str | None = None
-        self._reset_evt_remote_port_name = "/reset"
-        
+        # Reset event publisher
+        self._reset_event_port = yarp.BufferedPortBottle()
+        self._reset_event_port_name = "/reset"
+
 
         yarp.Network.init()
 
@@ -101,11 +100,11 @@ class ErgoCub(Robot):
         """
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
-            
+
         # Connect cameras using standard LeRobot interface
         for cam in self.cameras.values():
             cam.connect()
-        
+
         # Connect motor bus (hand and head controllers)
         self.bus.connect()
 
@@ -114,14 +113,16 @@ class ErgoCub(Robot):
         if not self._emotion_cmd_port.open(self._emotion_local_port_name):
             raise ConnectionError(f"Failed to open emotions RPC port {self._emotion_local_port_name}")
 
+        if not self._reset_event_port.open(self._reset_event_port_name):
+            raise ConnectionError(f"Failed to open reset event port {self._reset_event_port_name}")
+
         if not "Sim" in self.config.remote_prefix:
             while not yarp.Network.connect(self._emotion_local_port_name, self._emotion_remote_port_name):
                 print("ergoCubEmotions: waiting for connection")
                 time.sleep(1)
 
-        self._reset_evt_local_port_name = f"{self.config.local_prefix}/{self.session_id}/reset:o"
-        if not self._reset_evt_port.open(self._reset_evt_local_port_name):
-            raise ConnectionError(f"Failed to open reset event port {self._reset_evt_local_port_name}")
+        if not self._reset_event_port.open(self._reset_event_port_name):
+            raise ConnectionError(f"Failed to open reset event port {self._reset_event_port_name}")
 
         self._is_connected = True
 
@@ -130,10 +131,10 @@ class ErgoCub(Robot):
         self._safety_control_acquired = False
 
         self.acc_state = self.bus.read_state()
-        
+
         if not self.is_calibrated and calibrate:
             logger.info("ErgoCub doesn't require calibration - skipping.")
-            
+
         self.configure()
         logger.info("%s connected. Going to reset...", self)
 
@@ -144,22 +145,22 @@ class ErgoCub(Robot):
         """Disconnect from the robot and perform any necessary cleanup."""
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-            
+
         # Disconnect cameras
         for cam in self.cameras.values():
             cam.disconnect()
-        
+
         # Disconnect motor bus
         self.bus.disconnect()
 
         if self._emotion_cmd_port is not None:
             self._emotion_cmd_port.close()
 
-        if self._reset_evt_port is not None:
-            self._reset_evt_port.close()
+        if self._reset_event_port is not None:
+            self._reset_event_port.close()
 
         self._is_connected = False
-        
+
         logger.info("%s disconnected.", self)
 
     def get_observation(self) -> dict[str, Any]:
@@ -168,15 +169,15 @@ class ErgoCub(Robot):
 
         Returns:
             dict[str, Any]: A flat dictionary representing the robot's current sensory state.
-            
+
         Raises:
             DeviceNotConnectedError: if robot is not connected.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-            
+
         obs = {}
-        
+
         # Read camera data using standard LeRobot interface
         for cam_name, cam in self.cameras.items():
             cam_data = cam.read()
@@ -186,11 +187,11 @@ class ErgoCub(Robot):
                 obs[cam_name] = cam_data["image"]
             if "depth" in cam_data:
                 obs[f"{cam_name}_depth"] = cam_data["depth"]
-        
+
         # Read motor data (poses and finger positions) using new motor bus
         motor_data = self.bus.read_state()
         obs.update(motor_data)
-        
+
         return obs
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
@@ -268,7 +269,7 @@ class ErgoCub(Robot):
             return
 
         self._last_emotion_label = emotion_label
-    
+
     def _publish_reset_event(self) -> None:
         if self._reset_evt_local_port_name is None:
             return
@@ -284,7 +285,7 @@ class ErgoCub(Robot):
         """Reset the robot to a default state."""
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        
+
         # Reset safety handshake: require re-validation after reset.
         self.safety_checker.reset_arm_control()
         self._safety_control_acquired = False
@@ -293,7 +294,15 @@ class ErgoCub(Robot):
         self.bus.reset()
         self.acc_state = self.bus.read_state()
 
-        self._publish_reset_event()
+        # Publish reset event on /reset (best-effort, non-blocking when supported)
+        reset_event = self._reset_event_port.prepare()
+        reset_event.clear()
+        reset_event.addString("reset")
+        reset_event.addString(str(time.time()))
+        try:
+            self._reset_event_port.write(False)
+        except TypeError:
+            self._reset_event_port.write()
 
         logger.info("%s has been reset.", self)
 
@@ -321,10 +330,10 @@ class ErgoCub(Robot):
         """Whether the robot is currently connected."""
         # Check if cameras are connected
         cameras_connected = all(cam.is_connected for cam in self.cameras.values()) if self.cameras else True
-        
+
         # Check if motor bus is connected
         motors_connected = self.bus.is_connected
-        
+
         return self._is_connected and cameras_connected and motors_connected
 
     @property
@@ -341,8 +350,8 @@ class ErgoCub(Robot):
     @property
     def _action_ft(self) -> dict[str, type]:
         """Get motor features from the bus."""
-        return self.bus.action_features
-    
+        return {**self.bus.action_features, "emotions": float}
+
     @property
     def _state_ft(self) -> dict[str, type]:
         """Get motor features from the bus."""
@@ -371,7 +380,7 @@ class ErgoCub(Robot):
         """
         A dictionary describing the structure and types of the actions expected by the robot.
         ErgoCub actions are pose commands (position + orientation) for hands and head, plus finger positions.
-        
+
         Returns action features in SO100-like format with dot notation.
         """
         return self._action_ft  # Actions and observations have the same structure
