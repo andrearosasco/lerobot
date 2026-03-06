@@ -24,3 +24,5 @@ policy:
 
   # DANN settings
   use_dann: true
+  dann_lambda_max: 0.1
+  dann_gamma: 2.0

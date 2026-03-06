@@ -33,6 +33,7 @@ Notes:
 """
 
 import builtins
+import logging
 import os
 from collections import deque
 from pathlib import Path
@@ -247,15 +248,10 @@ class GrootPolicy(PreTrainedPolicy):
         return self.parameters()
 
     def _build_domain_head(self, feat_dim: int | None = None) -> nn.Module:
-        # Best-effort default: infer backbone projection dim (fallback to 1536).
         if feat_dim is None:
-            feat_dim = 1536
-            try:
-                eagle_linear = getattr(self._groot_model.backbone, "eagle_linear", None)
-                if isinstance(eagle_linear, nn.Linear):
-                    feat_dim = int(eagle_linear.out_features)
-            except Exception:
-                feat_dim = 1536
+            # The bridge preserves backbone_embedding_dim, so read it from the action head config.
+            cfg = getattr(self._groot_model.action_head, "config", None)
+            feat_dim = int(getattr(cfg, "backbone_embedding_dim", 1536))
 
         hidden = int(getattr(self.config, "dann_hidden_dim", 256))
         p = float(getattr(self.config, "dann_dropout", 0.0))
@@ -349,8 +345,12 @@ class GrootPolicy(PreTrainedPolicy):
             logits = self._domain_head(rev)
             domain_loss = F.cross_entropy(logits, domain_labels)
 
-            # Task loss computed only on source domain samples
+            # Task loss computed only on source domain samples.
+            # Zeroing target action_masks shrinks the denominator in
+            # loss.sum()/action_mask.sum(), so scale by source_frac to keep
+            # the effective magnitude equal to full-batch training.
             source_mask = domain_labels == self.config.dann_task_domain
+            source_frac = source_mask.float().mean()
             if source_mask.any():
                 src_action = action_inputs
                 action_mask = src_action.get("action_mask")
@@ -361,7 +361,7 @@ class GrootPolicy(PreTrainedPolicy):
                     src_action["action_mask"] = action_mask * src
 
                 task_out = self._groot_model.action_head(backbone_outputs, src_action)
-                task_loss = task_out.get("loss")
+                task_loss = task_out.get("loss") * source_frac
             else:
                 task_loss = torch.zeros((), device=device, dtype=torch.float32)
 
@@ -372,8 +372,14 @@ class GrootPolicy(PreTrainedPolicy):
             "task_loss": float(task_loss.item()),
             "domain_loss": float(domain_loss.item()),
             "dann_lambda": float(lambd),
-            "source_frac": float((domain_labels == self.config.dann_task_domain).float().mean().item()),
+            "source_frac": float(source_frac.item()),
         }
+
+        if self.training and int(self._dann_step) % 200 == 0:
+            logging.info(
+                f"DANN step:{int(self._dann_step)} task_loss:{loss_dict['task_loss']:.4f} "
+                f"domain_loss:{loss_dict['domain_loss']:.4f} λ:{lambd:.4f} src_frac:{loss_dict['source_frac']:.2f}"
+            )
 
         return loss, loss_dict
 
