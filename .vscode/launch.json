@@ -42,10 +42,11 @@
       "env": {
         "PYTHONPATH": "${workspaceFolder}/src"
       },
-      // "python": "/home/ergocub/mambaforge/envs/lerobot/bin/python",
+      "python": "/home/ergocub/mambaforge/envs/lerobot/bin/python",
       "preLaunchTask": "clear-test",
       "args": [
-        "--config_path=cfgs/eval/eval_gr00t_redball.yaml"
+        "--config_path=cfgs/eval/eval_gr00t.yaml"
+        // "--config_path=cfgs/record.yaml"
       ]
     },
     {

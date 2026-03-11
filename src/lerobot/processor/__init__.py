@@ -74,7 +74,7 @@ from .policy_robot_bridge import (
     PolicyActionToRobotActionProcessorStep,
     RobotActionToPolicyActionProcessorStep,
 )
-from .red_hue_processor import apply_red_hue
+# from .red_hue_processor import apply_red_hue
 from .rename_processor import RenameObservationsProcessorStep
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 

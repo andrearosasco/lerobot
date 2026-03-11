@@ -123,7 +123,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                     token=token,
                     local_files_only=local_files_only,
                 )
-                policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
+                policy = cls._load_as_safetensor(instance, model_file, config.device, False)
             except HfHubHTTPError as e:
                 raise FileNotFoundError(
                     f"{SAFETENSORS_SINGLE_FILE} not found on the HuggingFace Hub in {model_id}"
