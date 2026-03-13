@@ -67,15 +67,16 @@ class CustomManipulator(Robot):
 
     @property
     def action_features(self) -> dict:
-        return {
+        features = {
             "action.position.x": float,
             "action.position.y": float,
             "action.position.z": float,
             "action.orientation.x": float,
             "action.orientation.y": float,
             "action.orientation.z": float,
-            "action.gripper": float,
         }
+        features.update(self.gripper_interface.action_features)
+        return features
 
     @property
     def is_connected(self) -> bool:
@@ -136,9 +137,8 @@ class CustomManipulator(Robot):
 
         # Apply commands
         self.arm_interface.apply_commands(action=action)
-        
-        grip = action["gripper"]
-        self.gripper_interface.apply_commands(gripper_state=grip)
+
+        self.gripper_interface.apply_commands(action=action, gripper_state=action.get("gripper"))
         
         # Wait for step time (simple rate limiting)
         # In original code: while (time.perf_counter() - self.last_step) < (1/20): pass

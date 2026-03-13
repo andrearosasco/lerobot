@@ -27,8 +27,14 @@ class DummyGripper:
     def reset(self):
         pass
 
-    def apply_commands(self, width: float, speed: float = None, force: float = None):
+    def apply_commands(self, action=None, speed: float = None, force: float = None):
         pass
+
+    @property
+    def action_features(self) -> dict:
+        return {
+            "action.gripper": float,
+        }
 
     @property
     def features(self) -> dict:

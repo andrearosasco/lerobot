@@ -2,6 +2,7 @@ from lerobot.robots.custom_manipulator.grippers.panda_gripper import PandaGrippe
 from .arms.panda import Panda, PandaConfig
 from .grippers.robotiq import Robotiq, RobotiqConfig
 from .grippers.dummy import DummyGripper, DummyGripperConfig
+from .grippers.xhand import XHand, XHandConfig
 import numpy as np
 
 def make_arm_from_config(config):
@@ -18,6 +19,8 @@ def make_gripper_from_config(config):
     elif isinstance(config, PandaGripperConfig):
         from .grippers.panda_gripper import PandaGripper
         return PandaGripper(config)
+    elif isinstance(config, XHandConfig):
+        return XHand(config)
     else:
         raise ValueError(f"Unknown gripper config type: {type(config)}")
 

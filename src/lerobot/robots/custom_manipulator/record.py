@@ -49,8 +49,6 @@ from lerobot.robots.custom_manipulator.grippers.robotiq import RobotiqConfig
 from lerobot.robots.custom_manipulator.custom_manipulator import CustomManipulator
 from lerobot.robots.custom_manipulator.processor.metaquest_processor import MetaQuestRelativeMotionProcessor
 from lerobot.robots.custom_manipulator.processor.rotation_converters import AxisAngleToRot6D, Rot6DToAxisAngle
-from lerobot.teleoperators.metaquest.metaquest_rail.configuration_metaquest import MetaQuestRailConfig
-from lerobot.teleoperators.metaquest.metaquest_rail.metaquest import MetaQuestRail
 from lerobot.utils.control_utils import (
     init_keyboard_listener,
     is_headless,
@@ -65,10 +63,11 @@ from lerobot.policies.utils import make_robot_action
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.processor.rename_processor import rename_stats
 from lerobot.datasets.image_writer import safe_stop_image_writer
-from lerobot.teleoperators import Teleoperator
+from lerobot.teleoperators import Teleoperator, TeleoperatorConfig, make_teleoperator_from_config
 from lerobot.teleoperators.so100_leader import SO100Leader
 from lerobot.teleoperators.so101_leader import SO101Leader
 from lerobot.teleoperators.koch_leader import KochLeader
+from lerobot.teleoperators.metareader import MetaReaderConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from lerobot.utils.control_utils import predict_action
@@ -327,7 +326,7 @@ class RecordConfig:
         )
     )
     policy: PreTrainedConfig | None = None # field(default_factory=PolicyConfig)
-    teleop: MetaQuestRailConfig =  field(default_factory=MetaQuestRailConfig) 
+    teleop: TeleoperatorConfig | None = field(default_factory=MetaReaderConfig)
     dataset: DatasetRecordConfig = field(default_factory=DatasetRecordConfig)
     
     display_data: bool = True
@@ -361,10 +360,7 @@ def record(cfg: RecordConfig):
 
     # Initialize robot and teleop from config
     robot = CustomManipulator(cfg.robot)
-    if cfg.teleop is not None:
-        teleop = MetaQuestRail(cfg.teleop)
-    else:
-        teleop = None
+    teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 
     # Create processors
     # We replace the default teleop_action_processor with our custom one
