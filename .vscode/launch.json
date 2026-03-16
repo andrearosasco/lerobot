@@ -1,6 +1,7 @@
 {
   "version": "0.2.0",
   "configurations": [
+    
     {
       "name": "Test",
       "type": "debugpy",
@@ -103,6 +104,21 @@
         "--dataset.reset_time=3",
         "--dataset.episode_time=10",
         "--dataset.single_task=get the ball"
+      ]
+    },
+    {
+      "name": "Python: Remote Attach",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": {
+        "host": "localhost",
+        "port": 5678
+      },
+      "pathMappings": [
+        {
+          "localRoot": "${workspaceFolder}",
+          "remoteRoot": "${workspaceFolder}"
+        }
       ]
     }
   ]

@@ -1,8 +1,8 @@
 from lerobot.robots.custom_manipulator.grippers.panda_gripper import PandaGripperConfig
 from .arms.panda import Panda, PandaConfig
+from .grippers import XHand, XHandConfig
 from .grippers.robotiq import Robotiq, RobotiqConfig
 from .grippers.dummy import DummyGripper, DummyGripperConfig
-from .grippers.xhand import XHand, XHandConfig
 import numpy as np
 
 def make_arm_from_config(config):

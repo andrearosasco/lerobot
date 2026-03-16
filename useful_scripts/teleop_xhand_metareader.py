@@ -18,7 +18,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rate-hz", type=float, default=50.0)
     parser.add_argument("--startup-delay", type=float, default=2.0)
     parser.add_argument("--enable-tip-ik", action="store_true")
-    parser.add_argument("--urdf-path", default=None)
+    parser.add_argument("--urdf-path", default='ergocub2-design-hand/robotera/xhand1/urdf/Xhand-urdf/xhand_right/urdf/xhand_right.urdf')
     parser.add_argument("--palm-link-name", default="palm")
     parser.add_argument("--thumb-link", default="thumb_tip")
     parser.add_argument("--index-link", default="index_tip")
@@ -45,9 +45,6 @@ def main() -> int:
             serial_port=args.serial_port,
             baud_rate=args.baud_rate,
             startup_delay_s=args.startup_delay,
-            enable_tip_ik=args.enable_tip_ik,
-            require_ik=args.enable_tip_ik,
-            connect_reset=False,
             urdf_path=args.urdf_path,
             palm_link_name=args.palm_link_name,
             tip_link_names={

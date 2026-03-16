@@ -1,334 +1,180 @@
-import logging
-import math
+# pyright: reportMissingImports=false
 import time
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
-
+from klampt import WorldModel
+from klampt.math import so3, vectorops
+from klampt.model import ik
 import numpy as np
-
-from ..configs import GripperConfig
-
-try:
-    from xhand_controller import xhand_control
-except ImportError as exc:
-    xhand_control = None
-    _xhand_import_error = exc
-
-try:
-    from klampt import WorldModel
-    from klampt.math import so3, vectorops
-    from klampt.model import ik
-except ImportError as exc:
-    WorldModel = None
-    so3 = None
-    vectorops = None
-    ik = None
-    _klampt_import_error = exc
-
-
-LOGGER = logging.getLogger(__name__)
-TIP_NAMES = ("thumb", "index", "middle", "ring", "little")
-
-
-def _tip_feature_keys(prefix: str = "") -> dict[str, type[float]]:
-    features: dict[str, type[float]] = {}
-    for tip_name in TIP_NAMES:
-        for axis in ("x", "y", "z"):
-            features[f"{prefix}fingertip.{tip_name}.{axis}"] = float
-    return features
-
-
-@GripperConfig.register_subclass("xhand")
-@dataclass
-class XHandConfig(GripperConfig):
-    protocol: str = "RS485"
-    serial_port: str = "/dev/ttyUSB0"
-    baud_rate: int = 3000000
-    hand_id: int = 0
-    control_mode: int = 3
-    kp: float = 100.0
-    ki: float = 0.0
-    kd: float = 0.0
-    tor_max: float = 300.0
-    poll_force_update: bool = True
-    enable_tip_ik: bool = True
-    require_ik: bool = True
-    urdf_path: str | None = None
-    palm_link_name: str = "palm"
-    tip_link_names: dict[str, str] = field(
-        default_factory=lambda: {
-            "thumb": "thumb_tip",
-            "index": "index_tip",
-            "middle": "middle_tip",
-            "ring": "ring_tip",
-            "little": "little_tip",
-        }
-    )
-    niter: int = 20000
-    open_positions: list[float] = field(default_factory=lambda: [0.0] * 12)
-    closed_positions: list[float] = field(default_factory=lambda: [0.8] * 12)
-    startup_delay_s: float = 1.0
-    connect_reset: bool = False
-    command_retries: int = 3
-    retry_delay_s: float = 0.5
-    auto_detect_hand_id: bool = True
-
-    @property
-    def type(self) -> str:
-        return "xhand"
-
-
-class XHandKinematics:
-    def __init__(self, config: XHandConfig):
-        if WorldModel is None or ik is None or so3 is None or vectorops is None:
-            raise ImportError(
-                "xHand fingertip IK requires the 'klampt' package in the active lerobot environment."
-            ) from _klampt_import_error
-        if not config.urdf_path:
-            raise ValueError("XHandConfig.urdf_path must point to the xHand URDF when enable_tip_ik is True.")
-
-        urdf_path = Path(config.urdf_path)
-        if not urdf_path.is_file():
-            raise FileNotFoundError(f"xHand URDF was not found at {urdf_path}")
-
-        self.config = config
-        self.world = WorldModel()
-        load_result = self.world.loadRobot(str(urdf_path))
-        if load_result < 0:
-            raise RuntimeError(f"Failed to load xHand URDF from {urdf_path}")
-        self.robot = self.world.robot(0)
-        self.driver_names = [self.robot.driver(i).getName() for i in range(self.robot.numDrivers())]
-
-    def set_driver_positions(self, joint_positions: list[float]) -> None:
-        self.robot.setConfig(self.robot.configFromDrivers(joint_positions))
-
-    def get_driver_positions(self) -> list[float]:
-        return [self.robot.driver(i).getValue() for i in range(self.robot.numDrivers())]
-
-    def fingertip_positions_relative_to_palm(self, joint_positions: list[float]) -> dict[str, tuple[float, float, float]]:
-        self.set_driver_positions(joint_positions)
-        palm_rotation, palm_translation = self.robot.link(self.config.palm_link_name).getTransform()
-        inverse_rotation = so3.inv(palm_rotation)
-        relative_positions: dict[str, tuple[float, float, float]] = {}
-
-        for tip_name, link_name in self.config.tip_link_names.items():
-            _, tip_translation = self.robot.link(link_name).getTransform()
-            relative_positions[tip_name] = tuple(
-                so3.apply(inverse_rotation, vectorops.sub(tip_translation, palm_translation))
-            )
-
-        return relative_positions
-
-    def inverse_kinematic(
-        self,
-        fingertip_targets: dict[str, tuple[float, float, float]],
-        seed: list[float] | None = None,
-    ) -> list[float]:
-        if seed is not None:
-            self.set_driver_positions(seed)
-
-        palm_rotation, palm_translation = self.robot.link(self.config.palm_link_name).getTransform()
-        objectives = []
-        for tip_name, target in fingertip_targets.items():
-            link_name = self.config.tip_link_names[tip_name]
-            world_target = vectorops.add(palm_translation, so3.apply(palm_rotation, target))
-            objectives.append(ik.objective(self.robot.link(link_name), local=[0, 0, 0], world=world_target))
-
-        ik.solve(objectives, iters=self.config.niter, tol=1e-3, activeDofs=self.driver_names)
-        return self.get_driver_positions()
-
+import rerun as rr
+from xhand_controller import xhand_control
+from .config_xhand import TIPS, TIP_ACTIONS, XHandConfig
 
 class XHand:
     def __init__(self, config: XHandConfig | None = None):
-        self.config = config if config is not None else XHandConfig()
+        self.config = config or XHandConfig()
         self._device = None
-        self._kinematics = None
-        self._last_joint_positions = list(self.config.open_positions)
-        self._is_connected = False
+        self._last = list(self.config.open_positions)
+        self._world = None
+        self.robot = None
+        self.ik_dofs = []
+        self._palm_link_name = ""
+        self._tip_link_names = {}
+        self._rr_ready = False
+        self._rr_model_path = "xhand/model"
+        self._rr_step = 0
 
-        if self.config.enable_tip_ik:
-            try:
-                self._kinematics = XHandKinematics(self.config)
-            except Exception:
-                if self.config.require_ik:
-                    raise
-                LOGGER.warning("xHand fingertip IK is disabled because the kinematics model could not be initialized.", exc_info=True)
+        self._world = WorldModel()
+        self._world.loadRobot(self.config.urdf_path)
+        self.robot = self._world.robot(0)
+        self.ik_dofs = [self.robot.driver(i).getName() for i in range(self.robot.numDrivers())]
+        names = {self.robot.link(i).getName() for i in range(self.robot.numLinks())}
+        self._palm_link_name = self._resolve_link_name(self.config.palm_link_name, ("right_hand_link", "right_hand_ee_link", "base0"), names)
+        defaults = {
+            "thumb": "right_hand_thumb_rota_tip",
+            "index": "right_hand_index_rota_tip",
+            "middle": "right_hand_mid_tip",
+            "ring": "right_hand_ring_tip",
+            "little": "right_hand_pinky_tip",
+        }
+        self._tip_link_names = {
+            tip: self._resolve_link_name(self.config.tip_link_names.get(tip, defaults[tip]), (defaults[tip],), names)
+            for tip in TIPS
+        }
+        self._init_rerun()
+        self._log_rerun_state((self._last + [0.0] * self.robot.numDrivers())[: self.robot.numDrivers()], {})
+
+    def _init_rerun(self):
+        if self._rr_ready:
+            return
+        rr.init("xhand_debug", spawn=True)
+        rr.log("xhand/urdf_path", rr.TextDocument(str(self.config.urdf_path), media_type="text/plain"), static=True)
+        try:
+            rr.log_file_from_path(str(self.config.urdf_path), entity_path_prefix=self._rr_model_path, static=True)
+        except Exception:
+            rr.log(self._rr_model_path, rr.TextDocument("URDF model import failed in Rerun; logging link transforms only.", media_type="text/plain"), static=True)
+        self._rr_ready = True
+
+    def _log_rerun_state(self, joints: list[float], world_targets: dict[str, list[float]]):
+        if not self._rr_ready or self.robot is None:
+            return
+        self._rr_step += 1
+        rr.set_time_sequence("step", self._rr_step)
+        nd = self.robot.numDrivers()
+        j = (list(joints) + [0.0] * nd)[:nd]
+        self.robot.setConfig(self.robot.configFromDrivers(j))
+        for i in range(nd):
+            rr.log(f"xhand/joints/{self.robot.driver(i).getName()}", rr.Scalars(float(j[i])))
+        for i in range(self.robot.numLinks()):
+            link = self.robot.link(i)
+            r, t = link.getTransform()
+            rr.log(
+                f"{self._rr_model_path}/{link.getName()}",
+                rr.Transform3D(translation=[float(t[0]), float(t[1]), float(t[2])], mat3x3=so3.matrix(r), axis_length=0.01),
+            )
+        if world_targets:
+            points = [world_targets[tip] for tip in TIPS if tip in world_targets]
+            labels = [tip for tip in TIPS if tip in world_targets]
+            if points:
+                rr.log("xhand/targets", rr.Points3D(points, labels=labels, radii=0.005))
+
+    @staticmethod
+    def _resolve_link_name(name: str, fallbacks: tuple[str, ...], available: set[str]) -> str:
+        for candidate in (name, *fallbacks):
+            if candidate in available:
+                return candidate
+        raise RuntimeError(f"Invalid link name '{name}'. Available links do not include requested/fallback names.")
 
     def connect(self):
-        if self._is_connected:
+        if self._device is not None:
             return True
-        if xhand_control is None:
-            raise ImportError(
-                "The xhand_controller package is required to use the xHand gripper."
-            ) from _xhand_import_error
-        if self.config.enable_tip_ik and self.config.require_ik and self._kinematics is None:
-            raise RuntimeError("xHand fingertip IK is required but could not be initialized. Check klampt and urdf_path.")
-
         self._device = xhand_control.XHandControl()
-        if self.config.protocol.upper() == "RS485":
-            response = self._device.open_serial(self.config.serial_port, int(self.config.baud_rate))
-        elif self.config.protocol.upper() == "ETHERCAT":
+        if self.config.protocol.upper() == "ETHERCAT":
             ports = self._device.enumerate_devices("EtherCAT")
-            if not ports:
-                raise RuntimeError("No EtherCAT xHand devices were found.")
-            response = self._device.open_ethercat(ports[0])
+            reply = self._device.open_ethercat(ports[0])
         else:
-            raise ValueError(f"Unsupported xHand protocol: {self.config.protocol}")
-
-        if response.error_code != 0:
-            raise RuntimeError(f"Failed to open xHand device: {response.error_message}")
-
-        if self.config.auto_detect_hand_id and hasattr(self._device, "list_hands_id"):
-            try:
-                hand_ids = list(self._device.list_hands_id())
-            except Exception:
-                hand_ids = []
-            if hand_ids:
-                self.config.hand_id = int(hand_ids[0])
-
-        if self.config.startup_delay_s > 0:
-            time.sleep(self.config.startup_delay_s)
-
-        self._is_connected = True
-        if self.config.connect_reset:
-            self.reset()
+            reply = self._device.open_serial(self.config.serial_port, self.config.baud_rate)
+        if reply.error_code != 0:
+            raise RuntimeError(f"Failed to open xHand device: {reply.error_message}")
+        time.sleep(self.config.startup_delay_s)
         return True
 
     def disconnect(self):
-        self.close()
-
-    def close(self):
         if self._device is not None:
             self._device.close_device()
         self._device = None
-        self._is_connected = False
+    close = disconnect
 
     def reset(self):
-        self._send_joint_positions(self.config.open_positions)
-        time.sleep(0.5)
+        self._send(self.config.open_positions)
 
-    def apply_commands(self, action: dict[str, Any] | None = None, gripper_state: float | None = None, **kwargs):
+    def apply_commands(self, action: dict | None = None, **kwargs):
         del kwargs
-        fingertip_targets = self._extract_fingertip_targets(action)
-        if fingertip_targets and self._kinematics is not None:
-            joint_seed = self._read_joint_positions(force_update=self.config.poll_force_update)
-            target_joint_positions = self._kinematics.inverse_kinematic(fingertip_targets, seed=joint_seed)
-        else:
-            if gripper_state is None and action is not None:
-                gripper_state = float(action.get("gripper", 1.0))
-            if gripper_state is None:
-                gripper_state = 1.0
-            target_joint_positions = self._interpolate_grasp(float(gripper_state))
+        if not action or sum(list(action.values())) == 0.0:
+            return
 
-        self._send_joint_positions(target_joint_positions)
+        targets = {
+            tip: tuple(float(action[f"fingertip.{tip}.{axis}"]) for axis in "xyz")
+            for tip in TIPS
+            if action and all(f"fingertip.{tip}.{axis}" in action for axis in "xyz")
+        }
+
+        if targets and self.robot is not None:
+            seed = self._read()
+            nd = self.robot.numDrivers()
+            seed = (seed + [0.0] * nd)[:nd]
+            self.robot.setConfig(self.robot.configFromDrivers(seed))
+            palm_r, palm_t = self.robot.link(self._palm_link_name).getTransform()
+            local_rot = np.array([[0, -1, 0], [-1, 0, 0], [0, 0, -1]])
+            world_targets = {
+                tip: [
+                    float(v)
+                    for v in vectorops.add(
+                        palm_t,
+                        so3.apply(palm_r, local_rot @ target),
+                    )
+                ]
+                for tip, target in targets.items()
+            }
+            goals = [
+                ik.objective(self.robot.link(self._tip_link_names[tip]), local=[0, 0, 0], world=world_targets[tip])
+                for tip, target in targets.items()
+            ]
+            ik.solve(goals, iters=self.config.niter, tol=1e-3, activeDofs=self.ik_dofs)
+            cmd = [self.robot.driver(i).getValue() for i in range(self.robot.numDrivers())]
+            self._log_rerun_state(cmd, world_targets)
+            # return self._send(cmd)
 
     @property
-    def action_features(self) -> dict:
-        features = {"action.gripper": float}
-        if self.config.enable_tip_ik:
-            features.update({f"action.{key}": value for key, value in _tip_feature_keys().items()})
-        return features
-
+    def action_features(self) -> dict: return {"action.gripper": float, **TIP_ACTIONS}
     @property
-    def features(self) -> dict:
-        features = {"gripper": float}
-        for joint_index in range(len(self.config.open_positions)):
-            features[f"xhand.joint_{joint_index}"] = float
-        if self.config.enable_tip_ik:
-            features.update(_tip_feature_keys())
-        return features
+    def features(self) -> dict: return {"gripper": float, **{f"xhand.joint_{i}": float for i in range(len(self._last))}}
 
     def get_sensors(self):
-        joint_positions = self._read_joint_positions(force_update=self.config.poll_force_update)
-        observation = {"gripper": self._compute_gripper_scalar(joint_positions)}
-        for joint_index, value in enumerate(joint_positions):
-            observation[f"xhand.joint_{joint_index}"] = float(value)
+        joints = self._read()
+        grip = sum(min(1.0, max(0.0, (joint - closed) / (opened - closed or 1e-6))) for joint, opened, closed in zip(joints, self.config.open_positions, self.config.closed_positions, strict=True)) / len(self.config.open_positions)
+        return {"gripper": grip, **{f"xhand.joint_{i}": float(v) for i, v in enumerate(joints)}}
 
-        if self.config.enable_tip_ik:
-            fingertip_positions = self._relative_tip_positions(joint_positions)
-            for tip_name in TIP_NAMES:
-                tip_position = fingertip_positions.get(tip_name, (math.nan, math.nan, math.nan))
-                observation[f"fingertip.{tip_name}.x"] = float(tip_position[0])
-                observation[f"fingertip.{tip_name}.y"] = float(tip_position[1])
-                observation[f"fingertip.{tip_name}.z"] = float(tip_position[2])
-
-        return observation
-
-    def _extract_fingertip_targets(self, action: dict[str, Any] | None) -> dict[str, tuple[float, float, float]]:
-        if action is None or not self.config.enable_tip_ik:
-            return {}
-
-        fingertip_targets: dict[str, tuple[float, float, float]] = {}
-        for tip_name in TIP_NAMES:
-            keys = [f"fingertip.{tip_name}.{axis}" for axis in ("x", "y", "z")]
-            if not all(key in action for key in keys):
-                continue
-            fingertip_targets[tip_name] = tuple(float(action[key]) for key in keys)
-
-        return fingertip_targets
-
-    def _interpolate_grasp(self, gripper_state: float) -> list[float]:
-        state = float(np.clip(gripper_state, 0.0, 1.0))
-        open_positions = np.asarray(self.config.open_positions, dtype=float)
-        closed_positions = np.asarray(self.config.closed_positions, dtype=float)
-        return (closed_positions + (open_positions - closed_positions) * state).tolist()
-
-    def _send_joint_positions(self, joint_positions: list[float]) -> None:
+    def _send(self, joints: list[float]) -> None:
         if self._device is None:
             raise RuntimeError("xHand is not connected.")
-        response = None
-        for attempt in range(self.config.command_retries):
-            command = xhand_control.HandCommand_t()
-            for finger_index, target_position in enumerate(joint_positions[:12]):
-                command.finger_command[finger_index].id = finger_index
-                command.finger_command[finger_index].kp = int(self.config.kp)
-                command.finger_command[finger_index].ki = int(self.config.ki)
-                command.finger_command[finger_index].kd = int(self.config.kd)
-                command.finger_command[finger_index].position = float(target_position)
-                command.finger_command[finger_index].tor_max = int(self.config.tor_max)
-                command.finger_command[finger_index].mode = int(self.config.control_mode)
+        cmd = xhand_control.HandCommand_t()
+        for i, position in enumerate(joints[:12]):
+            finger = cmd.finger_command[i]
+            finger.id = i
+            finger.kp = self.config.kp
+            finger.ki = self.config.ki
+            finger.kd = self.config.kd
+            finger.position = float(position)
+            finger.tor_max = self.config.tor_max
+            finger.mode = self.config.control_mode
+        reply = self._device.send_command(self.config.hand_id, cmd)
+        if reply.error_code != 0:
+            raise RuntimeError(f"Failed to send xHand command: {reply.error_message}")
+        self._last = list(joints[:12])
 
-            response = self._device.send_command(self.config.hand_id, command)
-            if response.error_code == 0:
-                self._last_joint_positions = list(joint_positions)
-                return
-            LOGGER.warning(
-                "xHand send_command failed on attempt %s/%s: %s",
-                attempt + 1,
-                self.config.command_retries,
-                response.error_message,
-            )
-            if attempt + 1 < self.config.command_retries:
-                time.sleep(self.config.retry_delay_s)
-
-        raise RuntimeError(f"Failed to send xHand command: {response.error_message}")
-
-    def _read_joint_positions(self, force_update: bool) -> list[float]:
+    def _read(self) -> list[float]:
         if self._device is None:
-            return list(self._last_joint_positions)
-        response, state = self._device.read_state(self.config.hand_id, force_update)
-        if response.error_code != 0:
-            LOGGER.warning("Failed to read xHand state: %s", response.error_message)
-            return list(self._last_joint_positions)
-
-        joint_positions = [float(finger_state.position) for finger_state in state.finger_state]
-        self._last_joint_positions = joint_positions
-        return joint_positions
-
-    def _relative_tip_positions(self, joint_positions: list[float]) -> dict[str, tuple[float, float, float]]:
-        if self._kinematics is None:
-            return {}
-        try:
-            return self._kinematics.fingertip_positions_relative_to_palm(joint_positions)
-        except Exception:
-            LOGGER.warning("Failed to compute xHand fingertip forward kinematics.", exc_info=True)
-            return {}
-
-    def _compute_gripper_scalar(self, joint_positions: list[float]) -> float:
-        open_positions = np.asarray(self.config.open_positions, dtype=float)
-        closed_positions = np.asarray(self.config.closed_positions, dtype=float)
-        joints = np.asarray(joint_positions[: len(open_positions)], dtype=float)
-        closure = (joints - closed_positions) / (open_positions - closed_positions + 1e-6)
-        closure = np.clip(closure, 0.0, 1.0)
-        return float(np.mean(closure))
+            return list(self._last)
+        reply, state = self._device.read_state(self.config.hand_id, self.config.poll_force_update)
+        if reply.error_code == 0:
+            self._last = [float(finger.position) for finger in state.finger_state][:12]
+        return list(self._last)
