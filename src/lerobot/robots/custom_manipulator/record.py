@@ -24,6 +24,7 @@ from pyparsing import Optional
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+from lerobot.policies.groot.configuration_groot import GrootConfig
 from lerobot.robots.custom_manipulator.grippers.panda_gripper import PandaGripperConfig
 from scipy.spatial.transform import Rotation as R
 
@@ -207,7 +208,7 @@ def record_loop(
 
             rr.log('oculus_frame', rr.Transform3D(translation=[act["position.x"], act["position.y"], act["position.z"]],
                                                   mat3x3=R.from_rotvec([act["orientation.x"], act["orientation.y"], act["orientation.z"]]).as_matrix(),
-                                                  axis_length=0.1)
+                                                  )
             )
 
             # Check for exit signal from teleop (A button)
@@ -271,9 +272,9 @@ def record_loop(
 class DatasetRecordConfig:
     # Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).
     # repo_id: str = "ar0s/eval_pick-turtle-robotiq"
-    repo_id: str = "ar0s/7_trial"
+    repo_id: str = "HSP-IIT/Panda_Toast_Pick_and_Place"
     # A short but accurate description of the task performed during the recording
-    single_task: str = "Pick up the cubes and place them in the corresponding colored cups"
+    single_task: str = "Pick up the breads and place them in the plate once upon the other"
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
     root: str | Path | None = None
     # Limit the frames per second.
@@ -283,7 +284,7 @@ class DatasetRecordConfig:
     # Number of seconds for resetting the environment after each episode.
     reset_time_s: int | float = 0
     # Number of episodes to record.
-    num_episodes: int = 1
+    num_episodes: int = 10
     # Encode frames in the dataset into video
     video: bool = True
     # Upload dataset to Hugging Face hub.
@@ -306,13 +307,13 @@ class DatasetRecordConfig:
             raise ValueError("You need to provide a task as argument in `single_task`.")
         
 @dataclass
-class PolicyConfig(DiffusionConfig):
-    type: str = "diffusion"
-    crop_shape: tuple[int, int] = None
-    resize_shape: List[int] = field(default_factory=lambda: [120, 160])
-    noise_scheduler_type: str = "DDIM"
-    num_inference_steps: int = 10
-    pretrained_path: str = "/home/panda-admin/users/arosasco/lerobot-panda/lerobot/checkpoints/dp-pick-turtle-robotiq/checkpoints/last/pretrained_model"
+class PolicyConfig(GrootConfig):
+    type: str = "groot"
+    # crop_shape: tuple[int, int] = None
+    # resize_shape: List[int] = field(default_factory=lambda: [120, 160])
+    # noise_scheduler_type: str = "DDIM"
+    # num_inference_steps: int = 10
+    pretrained_path: str = "HSP-IIT/grroot-Panda_Toast_Pick_and_Place"
     
 
 @dataclass
@@ -327,13 +328,13 @@ class RecordConfig:
             }
         )
     )
-    policy: PreTrainedConfig | None = None #field(default_factory=PolicyConfig) #None
+    policy: PreTrainedConfig | None = None# field(default_factory=PolicyConfig) #None
     teleop: MetaQuestRailConfig =  field(default_factory=MetaQuestRailConfig) 
     dataset: DatasetRecordConfig = field(default_factory=DatasetRecordConfig)
     
     display_data: bool = True
     play_sounds: bool = True
-    resume: bool = False
+    resume: bool = True
 
 
     def __post_init__(self):

@@ -200,7 +200,7 @@ class Panda(Node):
                 [self._ik_task, self._posture_task],
                 dt=0.1,
                 solver="proxqp",
-                damping=1,
+                damping=0.1,
                 safety_break=False,
             )
             cfg.integrate_inplace(v, 0.1)
