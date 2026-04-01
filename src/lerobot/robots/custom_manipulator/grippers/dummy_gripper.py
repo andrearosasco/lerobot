@@ -32,15 +32,11 @@ class DummyGripper:
 
     @property
     def action_features(self) -> dict:
-        return {
-            "action.gripper": float,
-        }
+        return {}
 
     @property
     def features(self) -> dict:
-        return {
-            "gripper.pos": float,
-        }
+        return {}
 
     def get_sensors(self):
         return {'grip_joint_pos': np.array([0.0])}

@@ -15,6 +15,11 @@
 # python src/lerobot/robots/custom_manipulator/record.py
 # to start the teleoperation and data collection script.
 
+# To give ethercat permissions to access the xhand
+# sudo setcap cap_net_raw+ep /home/panda-admin/miniconda3/envs/lerobot/bin/python3.10
+# getcap /home/panda-admin/miniconda3/envs/lerobot/bin/python3.10
+
+
 name: lerobot
 channels:
   - robostack-staging

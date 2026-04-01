@@ -1,25 +1,31 @@
+import os
 import time
+from dataclasses import dataclass
+
 import numpy as np
 import rclpy
-import os
+
 os.environ.setdefault("OSQP_ALGEBRA_BACKEND", "builtin")
 import pinocchio as pin
+import draccus
+from lerobot.configs.types import FeatureType, PolicyFeature
+from panda_interface.msg import PandaCommand
+from panda_interface.srv import ApplyCommands, Close, Connect, GetSensors
 from pink import Configuration
 from pink.solve_ik import solve_ik
 from pink.tasks import FrameTask, PostureTask
-from scipy.spatial.transform import Rotation as R
 from rclpy.node import Node
-from panda_interface.srv import ApplyCommands, Connect, GetSensors, Close
-from panda_interface.msg import PandaCommand
-from dataclasses import dataclass
-import draccus
+from scipy.spatial.transform import Rotation as R
+
 from ..configs import ArmConfig
-from lerobot.configs.types import FeatureType, PolicyFeature
+# from .panda_utils import PandaDebugTools
 
 @ArmConfig.register_subclass("panda")
 @dataclass
 class PandaConfig(ArmConfig):
-    # Add any configuration parameters here if needed
+    enable_rerun_visualization: bool = False
+    use_delta_actions: bool = False
+
     @property
     def type(self) -> str:
         return "panda"
@@ -78,8 +84,11 @@ class Panda(Node):
         self._pin_data = None
         self._ik_task = None
         self._posture_task = None
-        self._ee_frame_id = None
+        self._wrist_frame_id = None
+        self._joint_names = None
         self._q_nom = None
+        self._debug = None
+        self._debug_urdf_path = None
 
         self.client_names = {}
         for name, type in Panda.interfaces.items():
@@ -102,10 +111,37 @@ class Panda(Node):
         jids = [full.getJointId("panda_finger_joint1"), full.getJointId("panda_finger_joint2")]
         self._pin_model = pin.buildReducedModel(full, jids, q0)
         self._pin_data = self._pin_model.createData()
-        ee_frame = "panda_hand"
-        self._ee_frame_id = self._pin_model.getFrameId(ee_frame)
-        self._ik_task = FrameTask(ee_frame, position_cost=1.0, orientation_cost=1.0)
+        self._joint_names = tuple(self._pin_model.names[1:])
+        wrist_frame = "panda_hand"
+        self._wrist_frame_id = self._pin_model.getFrameId(wrist_frame)
+        self._ik_task = FrameTask(wrist_frame, position_cost=1.0, orientation_cost=1.0)
         self._posture_task = PostureTask(cost=0.05, gain=0.1)
+        if self._debug is None:
+            debug_urdf_path = ""
+            if self.config.enable_rerun_visualization:
+                debug_xml = xml.replace("package://franka_description/", f"{base}/")
+                self._debug_urdf_path = os.path.join(base, "robots", "panda_debug.urdf")
+                with open(self._debug_urdf_path, "w") as stream:
+                    stream.write(debug_xml)
+                debug_urdf_path = self._debug_urdf_path
+            # self._debug = PandaDebugTools(
+            #     urdf_path=debug_urdf_path,
+            #     enable_rerun_visualization=self.config.enable_rerun_visualization,
+            # )
+
+    def _joint_state_dict(self, q) -> dict[str, float]:
+        self._ensure_kinematics()
+        return {name: float(value) for name, value in zip(self._joint_names, np.asarray(q, dtype=float))}
+
+    def _forward_kinematics(self, q):
+        self._ensure_kinematics()
+        q = np.asarray(q, dtype=float)
+        pin.forwardKinematics(self._pin_model, self._pin_data, q)
+        pin.updateFramePlacements(self._pin_model, self._pin_data)
+        oMf = self._pin_data.oMf[self._wrist_frame_id]
+        position = np.asarray(oMf.translation, dtype=float).copy()
+        wrist_orientation = R.from_matrix(np.asarray(oMf.rotation, dtype=float)).as_rotvec()
+        return position, wrist_orientation
 
     def connect(self):
         for name, client in self.client_names.items():
@@ -120,30 +156,32 @@ class Panda(Node):
 
     def apply_commands(self, action=None, q_desired=None, kp=None, kd=None, gain=4.):
         if action is not None:
-            # Extract action components
-            eef_pos = np.array([
-                action["position.x"],
-                action["position.y"],
-                action["position.z"]
-            ])
-            
-            # Orientation is axis-angle
-            axis_angle = np.array([
-                action["orientation.x"],
-                action["orientation.y"],
-                action["orientation.z"]
-            ])
-            
-            # Convert axis-angle to rotation matrix
-            eef_rot = R.from_rotvec(axis_angle).as_matrix()
-            
             # Get current joint positions for IK seed
             request = Panda.interfaces['get_sensors'].Request()
             self.future = self.client_names['get_sensors'].call_async(request)
             rclpy.spin_until_future_complete(self, self.future)
             state = self.future.result().state
             qpos = np.array(state.position)
-            
+
+            eef_pos = np.array([
+                action["position.x"],
+                action["position.y"],
+                action["position.z"]
+            ])
+            axis_angle = np.array([
+                action["orientation.x"],
+                action["orientation.y"],
+                action["orientation.z"]
+            ])
+            if self.config.use_delta_actions:
+                current_pos, current_axis_angle = self._forward_kinematics(qpos)
+                eef_pos = current_pos + eef_pos
+                target_rot = R.from_rotvec(axis_angle) * R.from_rotvec(current_axis_angle)
+                axis_angle = target_rot.as_rotvec()
+                eef_rot = target_rot.as_matrix()
+            else:
+                eef_rot = R.from_rotvec(axis_angle).as_matrix()
+
             # IK
             q_desired = self.compute_ik(eef_pos, eef_rot, q_seed=qpos)
 
@@ -151,6 +189,16 @@ class Panda(Node):
         # Ensure q_desired is a list or array
         if isinstance(q_desired, np.ndarray):
             q_desired = q_desired.tolist()
+
+        if q_desired is not None and self._debug is not None:
+            wrist_position, wrist_orientation = self._forward_kinematics(q_desired)
+            self._debug.log_state(
+                joints=self._joint_state_dict(q_desired),
+                wrist_position=[float(v) for v in wrist_position],
+                wrist_orientation=[float(v) for v in wrist_orientation],
+                target_position=eef_pos if action is not None else None,
+                target_orientation=axis_angle if action is not None else None,
+            )
             
         request.command = PandaCommand(position=q_desired, gain=gain)
         self.future = self.client_names['apply_commands'].call_async(request)
@@ -166,13 +214,7 @@ class Panda(Node):
         
         q = np.array(state.position)
 
-        self._ensure_kinematics()
-        pin.forwardKinematics(self._pin_model, self._pin_data, q)
-        pin.updateFramePlacements(self._pin_model, self._pin_data)
-        oMf = self._pin_data.oMf[self._ee_frame_id]
-        pos = oMf.translation
-        rot_matrix = oMf.rotation
-        rot_axis_angle = R.from_matrix(rot_matrix).as_rotvec()
+        pos, rot_axis_angle = self._forward_kinematics(q)
 
         pos = {f"position.{k}": v for k,v in zip(["x", "y", "z"], pos)}
         ori = {f"orientation.{k}": v for k,v in zip(["x", "y", "z"], rot_axis_angle)}
@@ -197,7 +239,7 @@ class Panda(Node):
         for _ in range(5):
             v = solve_ik(
                 cfg,
-                [self._ik_task, self._posture_task],
+                [self._ik_task,],
                 dt=0.1,
                 solver="proxqp",
                 damping=1,
@@ -207,7 +249,8 @@ class Panda(Node):
         return cfg.q
 
     def close(self):
-        pass
+        if self._debug is not None:
+            self._debug.close()
 
     def reset(self):
         # Define home position

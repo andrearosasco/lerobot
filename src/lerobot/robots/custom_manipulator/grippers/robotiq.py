@@ -30,7 +30,7 @@ class Robotiq(Node):
 
     def apply_commands(self, action=None, speed:float=None, force:float=None):
         cmd_msg = GripperCmd()
-        cmd_msg.position = float((1 - action) > 0.5)
+        cmd_msg.position = float((1 - action['gripper']) > 0.5)
         cmd_msg.force = force if force is not None else self.config.force
         cmd_msg.speed = speed if speed is not None else self.config.speed
         self.gripper_pub.publish(cmd_msg)
@@ -48,10 +48,11 @@ class Robotiq(Node):
         self.reset()
 
     def reset(self, width=0.1, **kwargs):
-        self.apply_commands(gripper_state=1.0)
-        time.sleep(0.5)
-        self.apply_commands(gripper_state=0.0)
-        time.sleep(0.5)
+
+        self.apply_commands({'gripper': 1.0})
+        time.sleep(2)
+        self.apply_commands({'gripper': 0.0})
+        time.sleep(2)
 
     def _state_topic_callback(self, msg):
         if self.gripper_state is not None and not self.gripper_state.done():

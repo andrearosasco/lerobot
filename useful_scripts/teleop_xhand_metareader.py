@@ -3,9 +3,14 @@
 import argparse
 import time
 
+from lerobot.robots.custom_manipulator.grippers.config_xhand import DEFAULT_TIP_LINK_NAMES
 from lerobot.robots.custom_manipulator.grippers.xhand import XHand, XHandConfig
 from lerobot.teleoperators.metareader import MetaReaderConfig, MetaReaderTeleoperator
 
+import debugpy
+debugpy.listen(5678)
+print('asdfasdfa')
+debugpy.wait_for_client()
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Teleoperate xHand directly from MetaReader without Panda.")
@@ -18,13 +23,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rate-hz", type=float, default=50.0)
     parser.add_argument("--startup-delay", type=float, default=2.0)
     parser.add_argument("--enable-tip-ik", action="store_true")
-    parser.add_argument("--urdf-path", default=None)
-    parser.add_argument("--palm-link-name", default="palm")
-    parser.add_argument("--thumb-link", default="thumb_tip")
-    parser.add_argument("--index-link", default="index_tip")
-    parser.add_argument("--middle-link", default="middle_tip")
-    parser.add_argument("--ring-link", default="ring_tip")
-    parser.add_argument("--little-link", default="little_tip")
+    parser.add_argument("--urdf-path", default='ergocub2-design-hand/robotera/xhand1/urdf/Xhand-urdf/xhand_right/urdf/xhand_right.urdf')
+    parser.add_argument("--palm-link-name", default="right_hand_ee_link")
+    parser.add_argument("--thumb-link", default=DEFAULT_TIP_LINK_NAMES["thumb"])
+    parser.add_argument("--index-link", default=DEFAULT_TIP_LINK_NAMES["index"])
+    parser.add_argument("--middle-link", default=DEFAULT_TIP_LINK_NAMES["middle"])
+    parser.add_argument("--ring-link", default=DEFAULT_TIP_LINK_NAMES["ring"])
+    parser.add_argument("--little-link", default=DEFAULT_TIP_LINK_NAMES["little"])
     return parser.parse_args()
 
 
@@ -40,14 +45,7 @@ def main() -> int:
 
     hand = XHand(
         XHandConfig(
-            protocol=args.protocol,
             hand_id=args.hand_id,
-            serial_port=args.serial_port,
-            baud_rate=args.baud_rate,
-            startup_delay_s=args.startup_delay,
-            enable_tip_ik=args.enable_tip_ik,
-            require_ik=args.enable_tip_ik,
-            connect_reset=False,
             urdf_path=args.urdf_path,
             palm_link_name=args.palm_link_name,
             tip_link_names={

@@ -566,24 +566,61 @@ class DataProcessorPipeline(HubMixin, Generic[TInput, TOutput]):
         # 1. Load configuration using simplified 3-way logic
         loaded_config, base_path = cls._load_config(model_id, config_filename, hub_download_kwargs)
 
-        # 2. Validate configuration and handle migration
-        cls._validate_loaded_config(model_id, loaded_config, config_filename)
-
-        # 3. Build steps with overrides
-        steps, validated_overrides = cls._build_steps_with_overrides(
-            loaded_config, overrides or {}, model_id, base_path, hub_download_kwargs
+        return cls.from_config(
+            loaded_config,
+            config_name=config_filename,
+            model_id=model_id,
+            base_path=base_path,
+            hub_download_kwargs=hub_download_kwargs,
+            overrides=overrides,
+            to_transition=to_transition or cast(Callable[[TInput], EnvTransition], batch_to_transition),
+            to_output=to_output or cast(Callable[[EnvTransition], TOutput], transition_to_batch),
         )
 
-        # 4. Validate that all overrides were used
+    @classmethod
+    def from_config(
+        cls,
+        loaded_config: dict[str, Any],
+        *,
+        config_name: str = "inline_config",
+        model_id: str = "<inline_config>",
+        base_path: Path | None = None,
+        hub_download_kwargs: dict[str, Any] | None = None,
+        overrides: dict[str, Any] | None = None,
+        to_transition: Callable[[TInput], EnvTransition] | None = None,
+        to_output: Callable[[EnvTransition], TOutput] | None = None,
+    ) -> DataProcessorPipeline[TInput, TOutput]:
+        loaded_config = cls._normalize_inline_config(loaded_config)
+        cls._validate_loaded_config(model_id, loaded_config, config_name)
+
+        steps, validated_overrides = cls._build_steps_with_overrides(
+            loaded_config,
+            overrides or {},
+            model_id,
+            base_path,
+            hub_download_kwargs or {},
+        )
+
         cls._validate_overrides_used(validated_overrides, loaded_config)
 
-        # 5. Construct and return the final pipeline instance
         return cls(
             steps=steps,
             name=loaded_config.get("name", "DataProcessorPipeline"),
             to_transition=to_transition or cast(Callable[[TInput], EnvTransition], batch_to_transition),
             to_output=to_output or cast(Callable[[EnvTransition], TOutput], transition_to_batch),
         )
+
+    @classmethod
+    def _normalize_inline_config(cls, loaded_config: dict[str, Any]) -> dict[str, Any]:
+        normalized_config = dict(loaded_config)
+        steps = normalized_config.get("steps")
+        if not isinstance(steps, list):
+            return normalized_config
+
+        normalized_config["steps"] = [
+            {"registry_name": step} if isinstance(step, str) else step for step in steps
+        ]
+        return normalized_config
 
     @classmethod
     def _load_config(

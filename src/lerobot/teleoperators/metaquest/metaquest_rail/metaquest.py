@@ -39,8 +39,8 @@ def vrbehind2mj(pose):
 
     mat = np.zeros([3, 3])
     mat[0][:] = +1.*pose[2][:3]
-    mat[1][:] = -1.*pose[0][:3]
-    mat[2][:] = -1.*pose[1][:3]
+    mat[1][:] = +1.*pose[0][:3]
+    mat[2][:] = +1.*pose[1][:3]
 
     # Convert matrix to axis-angle
     r = R.from_matrix(mat)

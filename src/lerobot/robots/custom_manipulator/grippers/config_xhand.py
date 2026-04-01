@@ -44,12 +44,13 @@ class XHandConfig(GripperConfig):
     kd: int = 0
     tor_max: int = 300
     poll_force_update: bool = True
-    urdf_path: str | None = None
+    urdf_path: str | None = 'ergocub2-design-hand/robotera/xhand1/urdf/Xhand-urdf/xhand_right/urdf/xhand_right.urdf'
     palm_link_name: str = "right_hand_ee_link"
     niter: int = 20000
     tip_link_names: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_TIP_LINK_NAMES))
     tip_scale_factors: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_TIP_SCALE_FACTORS))
     enable_tip_scale_tuner: bool = False
+    enable_rerun_visualization: bool = False
 
     @property
     def type(self) -> str:

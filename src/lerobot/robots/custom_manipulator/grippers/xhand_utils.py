@@ -12,6 +12,7 @@ class XHandDebugTools:
         urdf_path: str,
         tip_scale_factors: dict[str, float],
         enable_tip_scale_tuner: bool,
+        enable_rerun_visualization: bool,
         palm_frame,
         root_frame,
         tips,
@@ -19,13 +20,16 @@ class XHandDebugTools:
         self.tip_scale_factors = tip_scale_factors
         self._step = 0
         self._tip_scale_root = None
+        self._enable_rerun_visualization = enable_rerun_visualization
         self.palm_frame = palm_frame
         self.root_frame = root_frame
         self.tips = tips
+        self.urdf_tree = None
 
-        rr.init("xhand_debug", spawn=True)
-        rr.log_file_from_path(urdf_path, static=True)
-        self.urdf_tree = UrdfTree.from_file_path(urdf_path)
+        if self._enable_rerun_visualization:
+            rr.init("xhand_debug", spawn=True)
+            rr.log_file_from_path(urdf_path, static=True)
+            self.urdf_tree = UrdfTree.from_file_path(urdf_path)
 
         if enable_tip_scale_tuner:
             import tkinter as tk
@@ -60,6 +64,9 @@ class XHandDebugTools:
         joints: list[float],
         target_positions: dict[str, list[float]],
     ):
+        if not self._enable_rerun_visualization or self.urdf_tree is None:
+            return
+
         self._step += 1
         rr.set_time("step", sequence=self._step)
 

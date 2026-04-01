@@ -16,6 +16,7 @@
 
 from .metaquest_yarp.configuration_metaquest import MetaQuestConfig
 from .metaquest_keyboard.configuration_metaquest_keyboard import BimanualKeyboardConfig
+from .metaquest_rail.metaquest import MetaQuestRail, MetaQuestRailConfig
 try:
     from .metaquest_yarp.metaquest import MetaQuest
 except ImportError as e:
@@ -24,4 +25,3 @@ except ImportError as e:
         def __init__(self, *args, **kwargs):
             raise _yarp_import_error
 from .metaquest_keyboard.metaquest_keyboard import BimanualKeyboard
-

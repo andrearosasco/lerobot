@@ -89,6 +89,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .metareader import MetaReaderTeleoperator
 
         return MetaReaderTeleoperator(config)
+    elif config.type == "metaquest_rail":
+        from .metaquest import MetaQuestRail
+
+        return MetaQuestRail(config)
     else:
         try:
             return cast(Teleoperator, make_device_from_device_class(config))

@@ -138,7 +138,7 @@ class CustomManipulator(Robot):
         # Apply commands
         self.arm_interface.apply_commands(action=action)
 
-        self.gripper_interface.apply_commands(action=action, gripper_state=action.get("gripper"))
+        self.gripper_interface.apply_commands(action=action)
         
         # Wait for step time (simple rate limiting)
         # In original code: while (time.perf_counter() - self.last_step) < (1/20): pass
