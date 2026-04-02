@@ -1,6 +1,9 @@
 # pyright: reportMissingImports=false
 import rerun as rr
 from rerun.urdf import UrdfTree
+from scipy.spatial.transform import Rotation as R
+
+HOME_ROT = R.from_rotvec([3.141592653589793, 0.0, 0.0])
 
 
 class PandaDebugTools:
@@ -24,10 +27,10 @@ class PandaDebugTools:
     def log_state(
         self,
         joints: dict[str, float],
-        wrist_position: list[float],
-        wrist_orientation: list[float],
-        target_position: list[float] | None,
-        target_orientation: list[float] | None,
+        state_eef_position: list[float],
+        state_eef_orientation: list[float],
+        target_eef_position: list[float] | None,
+        target_eef_orientation: list[float] | None,
     ):
         if not self._enable_rerun_visualization or self.urdf_tree is None:
             return
@@ -43,10 +46,13 @@ class PandaDebugTools:
             rr.log("transforms", joint.compute_transform(value))
             rr.log(f"/joints/{i}", rr.Scalars([value]))
 
-        self._log_points("/targets", {"wrist": target_position} if target_position is not None else {}, "target", [255, 80, 80], 0.01)
-        self._log_points("/wrist", {"wrist": wrist_position}, "wrist", [80, 170, 255], 0.01)
-        self._log_orientation("/targets/orientation", target_orientation, "target")
-        self._log_orientation("/wrist/orientation", wrist_orientation, "wrist")
+        self._log_points("/target_eef", {"eef": target_eef_position} if target_eef_position is not None else {}, "target", [255, 80, 80], 0.01)
+        self._log_points("/state_eef", {"eef": state_eef_position}, "state", [80, 170, 255], 0.01)
+        if target_eef_position is not None and target_eef_orientation is not None:
+            rr.log("/target_eef/frame", rr.Arrows3D(origins=[target_eef_position] * 3, vectors=(0.04 * (HOME_ROT * R.from_rotvec(target_eef_orientation)).as_matrix().T).tolist(), colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]], radii=0.002), rr.CoordinateFrame("panda_link0"))
+        rr.log("/state_eef/frame", rr.Arrows3D(origins=[state_eef_position] * 3, vectors=(0.04 * (HOME_ROT * R.from_rotvec(state_eef_orientation)).as_matrix().T).tolist(), colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]], radii=0.002), rr.CoordinateFrame("panda_link0"))
+        self._log_orientation("/target_eef/orientation", target_eef_orientation, "target_eef")
+        self._log_orientation("/state_eef/orientation", state_eef_orientation, "state_eef")
 
     @staticmethod
     def _log_points(path: str, points: dict[str, list[float]], prefix: str, color: list[int], radius: float):

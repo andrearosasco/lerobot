@@ -68,7 +68,7 @@ def make_episode_start_overlay(dataset, camera_key="left_rgb", alpha=0.5, path="
         if camera_key not in observation:
             return
         live = _to_rgb_uint8(observation[camera_key])
-        rr.log(f"{base_path}/live", rr.Image(live))
+        # rr.log(f"{base_path}/live", rr.Image(live))
         if composite is None:
             return
         composite_for_live = _resize_like(composite, live.shape)

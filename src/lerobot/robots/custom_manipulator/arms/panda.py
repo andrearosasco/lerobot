@@ -18,14 +18,14 @@ from rclpy.node import Node
 from scipy.spatial.transform import Rotation as R
 
 from ..configs import ArmConfig
-# from .panda_utils import PandaDebugTools
+from .panda_utils import PandaDebugTools
 
 HOME_ROT = R.from_rotvec([np.pi, 0.0, 0.0])
 
 @ArmConfig.register_subclass("panda")
 @dataclass
 class PandaConfig(ArmConfig):
-    enable_rerun_visualization: bool = False
+    visualize: bool = False
     use_delta_actions: bool = False
 
     @property
@@ -120,16 +120,16 @@ class Panda(Node):
         self._posture_task = PostureTask(cost=0.05, gain=0.1)
         if self._debug is None:
             debug_urdf_path = ""
-            if self.config.enable_rerun_visualization:
+            if self.config.visualize:
                 debug_xml = xml.replace("package://franka_description/", f"{base}/")
                 self._debug_urdf_path = os.path.join(base, "robots", "panda_debug.urdf")
                 with open(self._debug_urdf_path, "w") as stream:
                     stream.write(debug_xml)
                 debug_urdf_path = self._debug_urdf_path
-            # self._debug = PandaDebugTools(
-            #     urdf_path=debug_urdf_path,
-            #     enable_rerun_visualization=self.config.enable_rerun_visualization,
-            # )
+                self._debug = PandaDebugTools(
+                    urdf_path=debug_urdf_path,
+                    enable_rerun_visualization=self.config.visualize,
+                )
 
     def _joint_state_dict(self, q) -> dict[str, float]:
         self._ensure_kinematics()
@@ -157,6 +157,7 @@ class Panda(Node):
         return self.future.result()
 
     def apply_commands(self, action=None, q_desired=None, kp=None, kd=None, gain=4.):
+        debug_state_q = q_desired
         if action is not None:
             # Get current joint positions for IK seed
             request = Panda.interfaces['get_sensors'].Request()
@@ -164,6 +165,7 @@ class Panda(Node):
             rclpy.spin_until_future_complete(self, self.future)
             state = self.future.result().state
             qpos = np.array(state.position)
+            debug_state_q = qpos
 
             eef_pos = np.array([
                 action["position.x"],
@@ -193,13 +195,13 @@ class Panda(Node):
             q_desired = q_desired.tolist()
 
         if q_desired is not None and self._debug is not None:
-            wrist_position, wrist_orientation = self._forward_kinematics(q_desired)
+            wrist_position, wrist_orientation = self._forward_kinematics(debug_state_q)
             self._debug.log_state(
-                joints=self._joint_state_dict(q_desired),
-                wrist_position=[float(v) for v in wrist_position],
-                wrist_orientation=[float(v) for v in wrist_orientation],
-                target_position=eef_pos if action is not None else None,
-                target_orientation=axis_angle if action is not None else None,
+                joints=self._joint_state_dict(debug_state_q),
+                state_eef_position=[float(v) for v in wrist_position],
+                state_eef_orientation=[float(v) for v in wrist_orientation],
+                target_eef_position=eef_pos if action is not None else None,
+                target_eef_orientation=axis_angle if action is not None else None,
             )
             
         request.command = PandaCommand(position=q_desired, gain=gain)

@@ -1,7 +1,8 @@
 robot:
   arm:
     type: panda
-    use_delta_actions: false
+    use_delta_actions: true
+    visualize: true
   gripper:
     type: robotiq
   cameras:
@@ -25,9 +26,9 @@ dataset:
   repo_id: steb6/eval_pick_bread_final
   single_task: Pick the bread and place it in the plate.
   fps: 10
-  episode_time_s: 10000
+  episode_time_s: 18
   reset_time_s: 0
-  num_episodes: 500
+  num_episodes: 50
   video: true
   push_to_hub: false
   private: false
@@ -38,7 +39,7 @@ dataset:
 
 policy:
   type: groot
-  pretrained_path: steb6/groot-pick-bread
+  pretrained_path: ar0s/groot_pick_bread
 
 display_data: true
 play_sounds: true
