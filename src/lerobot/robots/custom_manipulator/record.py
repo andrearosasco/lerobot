@@ -37,7 +37,11 @@ from lerobot.processor.converters import (
 )
 from lerobot.robots.custom_manipulator.custom_manipulator import CustomManipulator
 from lerobot.robots.custom_manipulator.episode_start_overlay import make_episode_start_overlay
-from lerobot.robots.custom_manipulator.record_config import RecordConfig
+from lerobot.robots.custom_manipulator.record_config import (
+    RecordConfig,
+    get_missing_policy_source_message,
+    get_policy_loading_source,
+)
 from lerobot.utils.control_utils import (
     init_keyboard_listener,
     is_headless,
@@ -323,6 +327,12 @@ def record(cfg: RecordConfig):
         )
 
     # Load pretrained policy
+    if cfg.policy is not None:
+        policy_source = get_policy_loading_source(cfg.policy)
+        if policy_source is None:
+            raise ValueError(get_missing_policy_source_message(cfg.policy))
+        logging.info("Loading pretrained policy '%s' from '%s'.", cfg.policy.type, policy_source)
+
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
     sanity_check_dataset_name(cfg.dataset.repo_id, policy)
     preprocessor = None

@@ -14,6 +14,23 @@ from lerobot.robots.custom_manipulator.processor.metaquest_processor import (  #
 )
 
 
+def get_policy_loading_source(policy: PreTrainedConfig | None) -> str | None:
+    """Return the configured pretrained source for a policy, if any."""
+    if policy is None or policy.pretrained_path is None:
+        return None
+    return str(policy.pretrained_path)
+
+
+def get_missing_policy_source_message(policy: PreTrainedConfig) -> str:
+    repo_hint = str(policy.repo_id or "<hub-repo-or-local-dir>")
+    return (
+        f"Custom manipulator policy execution requires a pretrained checkpoint. "
+        f"A policy of type '{policy.type}' was configured without `policy.pretrained_path`. "
+        f"`policy.repo_id={policy.repo_id!r}` does not load weights in this script. "
+        f"Use `--policy.path={repo_hint}` or set `policy.pretrained_path: {repo_hint}` in the config."
+    )
+
+
 @dataclass
 class DatasetRecordConfig:
     # Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).
@@ -78,10 +95,13 @@ class RecordConfig:
         if policy_path:
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
-            self.policy.pretrained_path = policy_path
+            self.policy.pretrained_path = Path(policy_path)
 
         if self.teleop is None and self.policy is None:
             raise ValueError("Choose a policy, a teleoperator or both to control the robot")
+
+        if self.policy is not None and get_policy_loading_source(self.policy) is None:
+            raise ValueError(get_missing_policy_source_message(self.policy))
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:

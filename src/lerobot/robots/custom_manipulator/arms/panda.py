@@ -20,6 +20,8 @@ from scipy.spatial.transform import Rotation as R
 from ..configs import ArmConfig
 # from .panda_utils import PandaDebugTools
 
+HOME_ROT = R.from_rotvec([np.pi, 0.0, 0.0])
+
 @ArmConfig.register_subclass("panda")
 @dataclass
 class PandaConfig(ArmConfig):
@@ -140,7 +142,7 @@ class Panda(Node):
         pin.updateFramePlacements(self._pin_model, self._pin_data)
         oMf = self._pin_data.oMf[self._wrist_frame_id]
         position = np.asarray(oMf.translation, dtype=float).copy()
-        wrist_orientation = R.from_matrix(np.asarray(oMf.rotation, dtype=float)).as_rotvec()
+        wrist_orientation = (HOME_ROT.inv() * R.from_matrix(np.asarray(oMf.rotation, dtype=float))).as_rotvec()
         return position, wrist_orientation
 
     def connect(self):
@@ -178,9 +180,9 @@ class Panda(Node):
                 eef_pos = current_pos + eef_pos
                 target_rot = R.from_rotvec(axis_angle) * R.from_rotvec(current_axis_angle)
                 axis_angle = target_rot.as_rotvec()
-                eef_rot = target_rot.as_matrix()
+                eef_rot = (HOME_ROT * target_rot).as_matrix()
             else:
-                eef_rot = R.from_rotvec(axis_angle).as_matrix()
+                eef_rot = (HOME_ROT * R.from_rotvec(axis_angle)).as_matrix()
 
             # IK
             q_desired = self.compute_ik(eef_pos, eef_rot, q_seed=qpos)
@@ -239,7 +241,7 @@ class Panda(Node):
         for _ in range(5):
             v = solve_ik(
                 cfg,
-                [self._ik_task,],
+                [self._ik_task, self._posture_task],
                 dt=0.1,
                 solver="proxqp",
                 damping=1,
