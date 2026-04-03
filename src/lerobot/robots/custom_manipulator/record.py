@@ -64,6 +64,11 @@ from typing import Any, List
 
 import rerun as rr
 
+# import debugpy
+# debugpy.listen(5678)
+# print('Waiting for client...')
+# debugpy.wait_for_client()
+
 #  +---------------------------------------------------------------------------------------+
 #  |                                          record_loop                                  |
 #  +---------------------------------------------------------------------------------------+
@@ -160,6 +165,7 @@ def record_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
+    teleop_was_engaged = False
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
@@ -178,22 +184,10 @@ def record_loop(
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
 
-        # Get action from either policy or teleop
-        if policy is not None and preprocessor is not None and postprocessor is not None:
-            action_values = predict_action(
-                observation=observation_frame,
-                policy=policy,
-                device=get_safe_torch_device(policy.config.device),
-                preprocessor=preprocessor,
-                postprocessor=postprocessor,
-                use_amp=policy.config.use_amp,
-                task=single_task,
-                robot_type=robot.robot_type,
-            )
+        teleop_engaged = False
+        selected_action = None
 
-            act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
-
-        elif policy is None and isinstance(teleop, Teleoperator):
+        if isinstance(teleop, Teleoperator):
             act = teleop.get_action()
 
             rr.log('oculus_frame', rr.Transform3D(translation=[act["position.x"], act["position.y"], act["position.z"]],
@@ -210,28 +204,48 @@ def record_loop(
                 events["rerecord_episode"] = True
                 break
 
-            if not act.pop("is_engaged"):
+            teleop_engaged = bool(act.pop("is_engaged"))
+
+        # Get action from either policy or teleop
+        if teleop_engaged:
+            selected_action = teleop_action_processor((act, obs))
+        else:
+            if isinstance(teleop, Teleoperator):
                 teleop_action_processor.reset()
+
+                if teleop_was_engaged and policy is not None and preprocessor is not None and postprocessor is not None:
+                    policy.reset()
+                    preprocessor.reset()
+                    postprocessor.reset()
+
+                if policy is None:
+                    teleop_was_engaged = teleop_engaged
+                    continue
+
+            if policy is not None and preprocessor is not None and postprocessor is not None:
+                action_values = predict_action(
+                    observation=observation_frame,
+                    policy=policy,
+                    device=get_safe_torch_device(policy.config.device),
+                    preprocessor=preprocessor,
+                    postprocessor=postprocessor,
+                    use_amp=policy.config.use_amp,
+                    task=single_task,
+                    robot_type=robot.robot_type,
+                )
+                selected_action = make_robot_action(action_values, dataset.features)
+            else:
+                logging.info(
+                    "No policy or teleoperator provided, skipping action generation."
+                    "This is likely to happen when resetting the environment without a teleop device."
+                    "The robot won't be at its rest position at the start of the next episode."
+                )
+                teleop_was_engaged = teleop_engaged
                 continue
 
-            # Applies a pipeline to the raw teleop action, default is IdentityProcessor
-            act_processed_teleop = teleop_action_processor((act, obs))
-
-        else:
-            logging.info(
-                "No policy or teleoperator provided, skipping action generation."
-                "This is likely to happen when resetting the environment without a teleop device."
-                "The robot won't be at its rest position at the start of the next episode."
-            )
-            continue
-
         # Applies a pipeline to the action, default is IdentityProcessor
-        if policy is not None and act_processed_policy is not None:
-            action_values = act_processed_policy
-            robot_action_to_send = robot_action_processor((act_processed_policy, obs))
-        else:
-            action_values = act_processed_teleop
-            robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
+        action_values = selected_action
+        robot_action_to_send = robot_action_processor((selected_action, obs))
 
         _sent_action = robot.send_action(robot_action_to_send)
 
@@ -253,6 +267,8 @@ def record_loop(
                 f"Control frequency dropped below target: {actual_fps:.1f} Hz (actual) vs {fps} Hz (target). "
                 f"Loop took {dt_s*1000:.1f}ms vs target {target_dt_s*1000:.1f}ms."
             )
+
+        teleop_was_engaged = teleop_engaged
         
         busy_wait(target_dt_s - dt_s)
 
@@ -334,7 +350,7 @@ def record(cfg: RecordConfig):
         logging.info("Loading pretrained policy '%s' from '%s'.", cfg.policy.type, policy_source)
 
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
-    sanity_check_dataset_name(cfg.dataset.repo_id, policy)
+
     preprocessor = None
     postprocessor = None
     if cfg.policy is not None:

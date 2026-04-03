@@ -23,14 +23,14 @@ robot:
 
 
 dataset:
-  repo_id: steb6/eval_pick_bread_final
+  repo_id: ar0s/eval_groot_pick_bread
   single_task: Pick the bread and place it in the plate.
   fps: 10
   episode_time_s: 18
   reset_time_s: 0
   num_episodes: 50
   video: true
-  push_to_hub: false
+  push_to_hub: true
   private: false
   num_image_writer_processes: 0
   num_image_writer_threads_per_camera: 4
@@ -39,7 +39,13 @@ dataset:
 
 policy:
   type: groot
-  pretrained_path: ar0s/groot_pick_bread
+  pretrained_path: ar0s/groot_pick_bread_dagger
+
+# teleop:
+#   type: metaquest_rail
+
+# teleop_action_processor:
+#   steps: [clutch_processor, arm_absolute_to_delta]
 
 display_data: true
 play_sounds: true

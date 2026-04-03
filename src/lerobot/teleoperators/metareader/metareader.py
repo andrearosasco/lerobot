@@ -21,6 +21,7 @@ import metareader
 
 TIPS = ("thumb", "index", "middle", "ring", "little")
 METAREADER_TRANSFORM = np.array([[0, 0, -1], [-1, 0, 0], [0, 1, 0]], dtype=float)
+HOME_ROT = R.from_rotvec([np.pi, 0.0, 0.0])
 
 
 def _tip_features(prefix: str = "") -> dict[str, type[float]]:
@@ -157,7 +158,7 @@ class MetaReaderTeleoperator(Teleoperator):
             return self._neutral_action(engaged)
 
         palm_rotation = METAREADER_TRANSFORM @ R.from_quat(palm.orientation).as_matrix()
-        rotvec = R.from_matrix(palm_rotation).as_rotvec()
+        rotvec = (HOME_ROT.inv() * R.from_matrix(palm_rotation)).as_rotvec()
         palm_position = METAREADER_TRANSFORM @ np.asarray(palm.position, dtype=float)
         palm_inverse = R.from_matrix(palm_rotation).inv()
         action = self._neutral_action(engaged)

@@ -39,7 +39,7 @@ dataset:
   rename_map: {}
 
 teleop_action_processor:
-  steps: [metaquest_relative_motion_processor, absolute_pose_to_delta_pose]
+  steps: [clutch_processor, arm_absolute_to_delta]
 
 robot_action_processor:
   steps: []

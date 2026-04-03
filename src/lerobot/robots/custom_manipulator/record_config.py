@@ -9,8 +9,9 @@ from lerobot.teleoperators import TeleoperatorConfig
 from lerobot.teleoperators.metareader import MetaReaderConfig  # noqa: F401
 from lerobot.teleoperators.metaquest.metaquest_rail.metaquest import MetaQuestRailConfig  # noqa: F401
 from lerobot.robots.custom_manipulator.processor.metaquest_processor import (  # noqa: F401
-    AbsolutePoseToDeltaPose,
-    MetaQuestRelativeMotionProcessor,
+    ArmAbsoluteToDelta,
+    ClutchProcessor,
+    HandAbsoluteToDelta,
 )
 
 
@@ -84,7 +85,7 @@ class RecordConfig:
     # Resume recording on an existing dataset.
     resume: bool = False
     teleop_action_processor: dict[str, Any] = field(
-        default_factory=lambda: {"steps": ["metaquest_relative_motion_processor"]}
+        default_factory=lambda: {"steps": ["clutch_processor"]}
     )
     robot_action_processor: dict[str, Any] = field(default_factory=lambda: {"steps": []})
     robot_observation_processor: dict[str, Any] = field(default_factory=lambda: {"steps": []})

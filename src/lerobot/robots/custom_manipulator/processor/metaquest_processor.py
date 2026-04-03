@@ -4,8 +4,11 @@ from scipy.spatial.transform import Rotation as R
 from lerobot.processor import ProcessorStep, EnvTransition, ProcessorStepRegistry
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 
-@ProcessorStepRegistry.register("metaquest_relative_motion_processor")
-class MetaQuestRelativeMotionProcessor(ProcessorStep):
+FINGERTIP_KEYS = [f"fingertip.{tip}.{axis}" for tip in ("thumb", "index", "middle", "ring", "little") for axis in "xyz"]
+
+
+@ProcessorStepRegistry.register("clutch_processor")
+class ClutchProcessor(ProcessorStep):
     def __init__(self):
         self.reset()
 
@@ -71,8 +74,8 @@ class MetaQuestRelativeMotionProcessor(ProcessorStep):
         return features
 
 
-@ProcessorStepRegistry.register("absolute_pose_to_delta_pose")
-class AbsolutePoseToDeltaPose(ProcessorStep):
+@ProcessorStepRegistry.register("arm_absolute_to_delta")
+class ArmAbsoluteToDelta(ProcessorStep):
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         action = transition["action"]
         obs = transition["observation"]
@@ -94,6 +97,26 @@ class AbsolutePoseToDeltaPose(ProcessorStep):
         new_action["orientation.y"] = delta_rot_vec[1]
         new_action["orientation.z"] = delta_rot_vec[2]
         transition["action"] = new_action
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
+@ProcessorStepRegistry.register("hand_absolute_to_delta")
+class HandAbsoluteToDelta(ProcessorStep):
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        action = transition["action"]
+        obs = transition["observation"]
+
+        if not all(key in action for key in FINGERTIP_KEYS) or not all(key in obs for key in FINGERTIP_KEYS):
+            return transition
+
+        transition["action"] = action | {
+            key: action[key] - obs[key] for key in FINGERTIP_KEYS
+        }
         return transition
 
     def transform_features(
