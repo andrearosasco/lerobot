@@ -49,6 +49,8 @@ def cfg_to_group(
         lst.append(f"dataset:{cfg.dataset.repo_id}")
     if cfg.env is not None:
         lst.append(f"env:{cfg.env.type}")
+    elif getattr(cfg, "eval_envs", None):
+        lst.append(f"env:{cfg.eval_envs[0].env.type}")
     if truncate_tags:
         lst = [_maybe_truncate(tag) for tag in lst]
     return lst if return_list else "-".join(lst)
@@ -78,7 +80,12 @@ class WandBLogger:
         self.cfg = cfg.wandb
         self.log_dir = cfg.output_dir
         self.job_name = cfg.job_name
-        self.env_fps = cfg.env.fps if cfg.env else None
+        if cfg.env is not None:
+            self.env_fps = cfg.env.fps
+        elif getattr(cfg, "eval_envs", None):
+            self.env_fps = cfg.eval_envs[0].env.fps
+        else:
+            self.env_fps = None
         self._group = cfg_to_group(cfg)
 
         # Set up WandB.
@@ -195,9 +202,9 @@ class WandBLogger:
 
             self._wandb.log(data={f"{mode}/{k}": v}, step=step)
 
-    def log_video(self, video_path: str, step: int, mode: str = "train"):
+    def log_video(self, video_path: str, step: int, mode: str = "train", key: str = "video"):
         if mode not in {"train", "eval"}:
             raise ValueError(mode)
 
         wandb_video = self._wandb.Video(video_path, fps=self.env_fps, format="mp4")
-        self._wandb.log({f"{mode}/video": wandb_video}, step=step)
+        self._wandb.log({f"{mode}/{key}": wandb_video}, step=step)

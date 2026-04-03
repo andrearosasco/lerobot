@@ -1,0 +1,67 @@
+dataset:
+  repo_id: steb6/robocasa_pickplacecountertocabinet_l1_s1
+
+eval_envs:
+  - name: seen
+    env:
+      type: robocasa
+      task: PickPlaceCounterToCabinet
+      layout_ids: 1
+      style_ids: 1
+      split: null
+      fps: 20
+      episode_length: 500
+      enable_render: true
+      max_parallel_tasks: 1
+      observation_height: 256
+      observation_width: 256
+      camera_names:
+        - robot0_agentview_left
+        - robot0_agentview_right
+        - robot0_eye_in_hand
+  - name: unseen
+    env:
+      type: robocasa
+      task: PickPlaceCounterToCabinet
+      layout_ids: 1
+      style_ids: 2
+      split: null
+      fps: 20
+      episode_length: 500
+      enable_render: true
+      max_parallel_tasks: 1
+      observation_height: 256
+      observation_width: 256
+      camera_names:
+        - robot0_agentview_left
+        - robot0_agentview_right
+        - robot0_eye_in_hand
+
+job_name: robocasa_groot
+output_dir: outputs/train/groot-robocasa_pickplacecountertocabinet_l1_s1
+steps: 100000
+batch_size: 8
+num_workers: 10
+log_freq: 10
+eval_freq: 10000
+save_freq: 10000
+
+eval:
+  batch_size: 1
+  n_episodes: 50
+  use_async_envs: false
+
+wandb:
+  enable: true
+  project: lerobot
+  disable_artifact: true
+
+policy:
+  type: groot
+  repo_id: steb6/grootrobocasa_pickplacecountertocabinet_l1_s1
+  base_model_path: nvidia/GR00T-N1.5-3B
+  tokenizer_assets_repo: lerobot/eagle2hg-processor-groot-n1p5
+  device: cuda
+  n_obs_steps: 1
+  chunk_size: 16
+  n_action_steps: 8

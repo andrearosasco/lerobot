@@ -34,6 +34,18 @@ from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_ST
 from lerobot.utils.utils import get_channel_first_image_shape
 
 
+def env_has_attr(env: gym.vector.VectorEnv, name: str) -> bool:
+    try:
+        result = env.call("has_wrapper_attr", name)
+        return bool(result[0])
+    except Exception:
+        try:
+            env.call(name)
+            return True
+        except Exception:
+            return False
+
+
 def _convert_nested_dict(d):
     result = {}
     for k, v in d.items():
@@ -107,6 +119,30 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     if "camera_obs" in observations:
         return_observations[f"{OBS_STR}.camera_obs"] = observations["camera_obs"]
 
+    # Handle RoboCasa Gym wrapper format.
+    for key, value in observations.items():
+        if key.startswith("video."):
+            img_tensor = torch.from_numpy(value)
+            if img_tensor.ndim == 3:
+                img_tensor = img_tensor.unsqueeze(0)
+            assert img_tensor.dtype == torch.uint8, f"expect torch.uint8, but instead {img_tensor.dtype=}"
+            img_tensor = einops.rearrange(img_tensor, "b h w c -> b c h w").contiguous().type(torch.float32)
+            img_tensor /= 255
+            return_observations[f"{OBS_IMAGES}.{key.split('.', 1)[1]}"] = img_tensor
+        elif key.startswith("state."):
+            state_tensor = torch.from_numpy(value).float()
+            if state_tensor.dim() == 1:
+                state_tensor = state_tensor.unsqueeze(0)
+            return_observations.setdefault(OBS_STATE, [])
+            return_observations[OBS_STATE].append(state_tensor)
+        elif key == "annotation.human.task_description":
+            if isinstance(value, np.ndarray):
+                value = value.tolist()
+            return_observations["task"] = value
+
+    if isinstance(return_observations.get(OBS_STATE), list):
+        return_observations[OBS_STATE] = torch.cat(return_observations[OBS_STATE], dim=-1)
+
     return return_observations
 
 
@@ -141,10 +177,7 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("once", UserWarning)  # Apply filter only in this function
 
-        if not (
-            env.call("has_wrapper_attr", "task_description")[0]
-            and env.call("has_wrapper_attr", "task")[0]
-        ):
+        if not (env_has_attr(env, "task_description") and env_has_attr(env, "task")):
             warnings.warn(
                 "The environment does not have 'task_description' and 'task'. Some policies require these features.",
                 UserWarning,
@@ -160,7 +193,20 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
 
 def add_envs_task(env: gym.vector.VectorEnv, observation: RobotObservation) -> RobotObservation:
     """Adds task feature to the observation dict with respect to the first environment attribute."""
-    if env.call("has_wrapper_attr", "task_description")[0]:
+    if "task" in observation:
+        task_result = observation["task"]
+        if isinstance(task_result, np.ndarray):
+            task_result = task_result.tolist()
+        if isinstance(task_result, tuple):
+            task_result = list(task_result)
+        if isinstance(task_result, str):
+            task_result = [task_result] * next(
+                value.shape[0] for key, value in observation.items() if key != "task" and hasattr(value, "shape")
+            )
+        observation["task"] = task_result
+        return observation
+
+    if env_has_attr(env, "task_description"):
         task_result = env.call("task_description")
 
         if isinstance(task_result, tuple):
@@ -172,7 +218,7 @@ def add_envs_task(env: gym.vector.VectorEnv, observation: RobotObservation) -> R
             raise TypeError("All items in task_description result must be strings")
 
         observation["task"] = task_result
-    elif env.call("has_wrapper_attr", "task")[0]:
+    elif env_has_attr(env, "task"):
         task_result = env.call("task")
 
         if isinstance(task_result, tuple):

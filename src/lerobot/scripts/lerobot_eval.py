@@ -66,6 +66,8 @@ import einops
 import gymnasium as gym
 import numpy as np
 import torch
+from gymnasium.spaces import Dict as DictSpace
+from gymnasium.spaces.utils import unflatten
 from accelerate.utils import extract_model_from_parallel
 from termcolor import colored
 from torch import Tensor, nn
@@ -78,6 +80,7 @@ from lerobot.envs.utils import (
     add_envs_task,
     check_env_attributes_and_types,
     close_envs,
+    env_has_attr,
     preprocess_observation,
 )
 from lerobot.policies.factory import make_policy, make_pre_post_processors
@@ -92,6 +95,73 @@ from lerobot.utils.utils import (
     init_logging,
     inside_slurm,
 )
+
+
+ROBOCASA_ACTION_SLICES = {
+    "action.base_motion": (0, 4),
+    "action.control_mode": (4, 5),
+    "action.end_effector_position": (5, 8),
+    "action.end_effector_rotation": (8, 11),
+    "action.gripper_close": (11, 12),
+}
+
+
+def _success_values_to_list(value: Any, num_envs: int) -> list[bool]:
+    arr = np.asarray(value)
+    if arr.ndim == 0:
+        return [bool(arr.item())] * num_envs
+    arr = arr.reshape(-1)
+    if arr.shape[0] == 1 and num_envs != 1:
+        return [bool(arr[0])] * num_envs
+    if arr.shape[0] != num_envs:
+        raise ValueError(f"Unexpected success shape {arr.shape}; expected {num_envs} values.")
+    return arr.astype(bool).tolist()
+
+
+def _extract_successes(info: dict[str, Any], num_envs: int) -> list[bool]:
+    successes = [False] * num_envs
+
+    for key in ("success", "is_success"):
+        if key in info:
+            current = _success_values_to_list(info[key], num_envs)
+            successes = [prev or cur for prev, cur in zip(successes, current, strict=True)]
+
+    if "final_info" in info:
+        final_info = info["final_info"]
+        if not isinstance(final_info, dict):
+            raise RuntimeError(
+                "Unsupported `final_info` format: expected dict (Gymnasium >= 1.0). "
+                "You're likely using an older version of gymnasium (< 1.0). Please upgrade."
+            )
+        for key in ("is_success", "success"):
+            if key in final_info:
+                current = _success_values_to_list(final_info[key], num_envs)
+                successes = [prev or cur for prev, cur in zip(successes, current, strict=True)]
+
+    return successes
+
+
+def _convert_flat_action_for_env(
+    env: gym.vector.VectorEnv, action_numpy: np.ndarray
+) -> np.ndarray | dict[str, np.ndarray]:
+    if isinstance(env.single_action_space, DictSpace):
+        keys = list(env.single_action_space.spaces.keys())
+        if set(keys) == set(ROBOCASA_ACTION_SLICES):
+            action_dict: dict[str, np.ndarray] = {}
+            for key, (start, end) in ROBOCASA_ACTION_SLICES.items():
+                value = action_numpy[:, start:end]
+                if key in {"action.gripper_close", "action.control_mode"}:
+                    value = np.where(value >= 0.0, 1.0, -1.0).astype(np.float32)
+                action_dict[key] = value
+            return action_dict
+
+        action_dict_batches = [unflatten(env.single_action_space, action_numpy[i]) for i in range(env.num_envs)]
+        return {
+            key: np.stack([action_dict[key] for action_dict in action_dict_batches], axis=0)
+            for key in action_dict_batches[0]
+        }
+
+    return action_numpy
 
 
 def rollout(
@@ -153,7 +223,14 @@ def rollout(
     step = 0
     # Keep track of which environments are done.
     done = np.array([False] * env.num_envs)
-    max_steps = env.call("_max_episode_steps")[0]
+    if env_has_attr(env, "_max_episode_steps"):
+        max_steps = env.call("_max_episode_steps")[0]
+    elif env_has_attr(env, "horizon"):
+        max_steps = env.call("horizon")[0]
+    elif getattr(env, "spec", None) is not None and getattr(env.spec, "max_episode_steps", None) is not None:
+        max_steps = env.spec.max_episode_steps
+    else:
+        raise AttributeError("Environment does not expose '_max_episode_steps' or 'horizon'.")
     progbar = trange(
         max_steps,
         desc=f"Running rollout with at most {max_steps} steps",
@@ -186,23 +263,16 @@ def rollout(
         action_numpy: np.ndarray = action.to("cpu").numpy()
         assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
 
+        action_to_step = _convert_flat_action_for_env(env, action_numpy)
+
         # Apply the next action.
-        observation, reward, terminated, truncated, info = env.step(action_numpy)
+        observation, reward, terminated, truncated, info = env.step(action_to_step)
         if render_callback is not None:
             render_callback(env)
 
-        # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
-        # available if none of the envs finished.
-        if "final_info" in info:
-            final_info = info["final_info"]
-            if not isinstance(final_info, dict):
-                raise RuntimeError(
-                    "Unsupported `final_info` format: expected dict (Gymnasium >= 1.0). "
-                    "You're likely using an older version of gymnasium (< 1.0). Please upgrade."
-                )
-            successes = final_info["is_success"].tolist()
-        else:
-            successes = [False] * env.num_envs
+        # Prefer per-step success flags when available (RoboCasa exposes them this way),
+        # and fall back to final_info for environments that only report success on termination.
+        successes = _extract_successes(info, env.num_envs)
 
         # Keep track of which environments are done so far.
         # Mark the episode as done if we reach the maximum step limit.
@@ -294,6 +364,7 @@ def eval_policy(
 
     start = time.time()
     policy.eval()
+    render_fps = env.unwrapped.metadata.get("render_fps", getattr(env.unwrapped, "control_freq", 30))
 
     # Determine how many batched rollouts we need to get n_episodes. Note that if n_episodes is not evenly
     # divisible by env.num_envs we end up discarding some data in the last batch.
@@ -379,7 +450,7 @@ def eval_policy(
                 done_indices,
                 start_episode_index=batch_ix * env.num_envs,
                 start_data_index=(0 if episode_data is None else (episode_data["index"][-1].item() + 1)),
-                fps=env.unwrapped.metadata["render_fps"],
+                fps=render_fps,
             )
             if episode_data is None:
                 episode_data = this_episode_data
@@ -407,7 +478,7 @@ def eval_policy(
                     args=(
                         str(video_path),
                         stacked_frames[: done_index + 1],  # + 1 to capture the last observation
-                        env.unwrapped.metadata["render_fps"],
+                        render_fps,
                     ),
                 )
                 thread.start()

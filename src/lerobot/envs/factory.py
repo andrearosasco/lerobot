@@ -21,7 +21,15 @@ import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.envs.configs import AlohaEnv, EnvConfig, HubEnvConfig, IsaaclabArenaEnv, LiberoEnv, PushtEnv
+from lerobot.envs.configs import (
+    AlohaEnv,
+    EnvConfig,
+    HubEnvConfig,
+    IsaaclabArenaEnv,
+    LiberoEnv,
+    PushtEnv,
+    RoboCasaEnv,
+)
 from lerobot.envs.utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.processor import ProcessorStep
@@ -36,6 +44,8 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         return PushtEnv(**kwargs)
     elif env_type == "libero":
         return LiberoEnv(**kwargs)
+    elif env_type == "robocasa":
+        return RoboCasaEnv(**kwargs)
     else:
         raise ValueError(f"Policy type '{env_type}' is not available.")
 
@@ -222,7 +232,10 @@ def make_env(
     def _make_one():
         return gym.make(cfg.gym_id, disable_env_checker=cfg.disable_env_checker, **(cfg.gym_kwargs or {}))
 
-    vec = env_cls([_make_one for _ in range(n_envs)], autoreset_mode=gym.vector.AutoresetMode.SAME_STEP)
+    vec_kwargs = {}
+    if hasattr(gym.vector, "AutoresetMode"):
+        vec_kwargs["autoreset_mode"] = gym.vector.AutoresetMode.SAME_STEP
+    vec = env_cls([_make_one for _ in range(n_envs)], **vec_kwargs)
 
     # normalize to {suite: {task_id: vec_env}} for consistency
     suite_name = cfg.type  # e.g., "pusht", "aloha"
