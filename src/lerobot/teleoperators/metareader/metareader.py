@@ -25,7 +25,7 @@ HOME_ROT = R.from_rotvec([np.pi, 0.0, 0.0])
 
 
 def _tip_features(prefix: str = "") -> dict[str, type[float]]:
-    return {f"{prefix}fingertip.{tip}.{axis}": float for tip in TIPS for axis in "xyz"}
+    return {f"{prefix}{tip}.position.{axis}": float for tip in TIPS for axis in "xyz"}
 
 
 class _SpacebarClutch:
@@ -180,7 +180,7 @@ class MetaReaderTeleoperator(Teleoperator):
                 continue
             tip_position = METAREADER_TRANSFORM @ np.asarray(pose.position, dtype=float)
             relative = palm_inverse.apply(tip_position - palm_position)
-            action[f"fingertip.{tip}.x"] = float(relative[0])
-            action[f"fingertip.{tip}.y"] = float(relative[1])
-            action[f"fingertip.{tip}.z"] = float(relative[2])
+            action[f"{tip}.position.x"] = float(relative[0])
+            action[f"{tip}.position.y"] = float(relative[1])
+            action[f"{tip}.position.z"] = float(relative[2])
         return action

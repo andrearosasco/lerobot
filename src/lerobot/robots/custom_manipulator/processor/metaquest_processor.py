@@ -4,7 +4,7 @@ from scipy.spatial.transform import Rotation as R
 from lerobot.processor import ProcessorStep, EnvTransition, ProcessorStepRegistry
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 
-FINGERTIP_KEYS = [f"fingertip.{tip}.{axis}" for tip in ("thumb", "index", "middle", "ring", "little") for axis in "xyz"]
+FINGERTIP_KEYS = [(f"{tip}.position.{axis}", f"state.{tip}.position.{axis}") for tip in ("thumb", "index", "middle", "ring", "little") for axis in "xyz"]
 
 
 @ProcessorStepRegistry.register("clutch_processor")
@@ -111,11 +111,11 @@ class HandAbsoluteToDelta(ProcessorStep):
         action = transition["action"]
         obs = transition["observation"]
 
-        if not all(key in action for key in FINGERTIP_KEYS) or not all(key in obs for key in FINGERTIP_KEYS):
+        if not all(action_key in action for action_key, _ in FINGERTIP_KEYS) or not all(obs_key in obs for _, obs_key in FINGERTIP_KEYS):
             return transition
 
         transition["action"] = action | {
-            key: action[key] - obs[key] for key in FINGERTIP_KEYS
+            action_key: action[action_key] - obs[obs_key] for action_key, obs_key in FINGERTIP_KEYS
         }
         return transition
 

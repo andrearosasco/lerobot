@@ -691,7 +691,7 @@ def build_dataset_frame(
             # The names in ft["names"] should match keys in values
             # If they don't exist directly, skip this feature
             try:
-                frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
+                frame[key] = np.array([values[name if name in values or prefix != OBS_STR else f"state.{name}"] for name in ft["names"]], dtype=np.float32)
             except KeyError as e:
                 # Debug: print what keys are available vs what we're looking for
                 missing_key = str(e).strip("'")

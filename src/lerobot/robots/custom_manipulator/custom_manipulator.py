@@ -48,6 +48,9 @@ class CustomManipulator(Robot):
 
         self.arm_interface = make_arm_from_config(config.arm)
         self.gripper_interface = make_gripper_from_config(config.gripper)
+        self.arm_interface.set_end_effector_transform(
+            self.gripper_interface.get_end_effector_transform(config.arm.type)
+        )
             
         self.cameras = make_cameras_from_configs(config.cameras)
         
@@ -154,4 +157,3 @@ class CustomManipulator(Robot):
         
         self.arm_interface.reset()
         self.gripper_interface.reset()
-

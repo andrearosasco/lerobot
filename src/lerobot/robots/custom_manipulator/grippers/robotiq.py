@@ -21,12 +21,19 @@ class RobotiqConfig(GripperConfig):
         return "robotiq"
 
 class Robotiq(Node):
+    end_effector_transforms = {
+        "panda": np.eye(4),
+    }
+
     def __init__(self, config: RobotiqConfig = None, **kwargs):
         super().__init__('robotiq_action_client')
         self.config = config if config else RobotiqConfig()
         self.create_subscription(GripperStat, "/gripper/stat", self._state_topic_callback, 1)
         self.gripper_pub = self.create_publisher(GripperCmd, '/gripper/cmd', 1)
         self.gripper_state = None
+
+    def get_end_effector_transform(self, arm_type: str) -> np.ndarray:
+        return self.end_effector_transforms[arm_type].copy()
 
     def apply_commands(self, action=None, speed:float=None, force:float=None):
         cmd_msg = GripperCmd()

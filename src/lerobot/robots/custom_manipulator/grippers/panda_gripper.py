@@ -34,6 +34,9 @@ class PandaGripper(Node):
             client = self.create_client(type, name)
             self.client_names[name] = client
 
+    def get_end_effector_transform(self, arm_type: str) -> np.ndarray:
+        return {"panda": np.eye(4)}[arm_type].copy()
+
     def connect(self):
         for name, client in self.client_names.items():
              if not client.wait_for_service(timeout_sec=1.0):

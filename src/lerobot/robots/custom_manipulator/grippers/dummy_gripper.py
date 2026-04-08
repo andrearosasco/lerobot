@@ -15,6 +15,10 @@ class DummyGripper:
     def __init__(self, config: DummyGripperConfig = None):
         self.config = config if config else DummyGripperConfig()
 
+    def get_end_effector_transform(self, arm_type: str) -> np.ndarray:
+        identity = np.eye(4)
+        return {"dummy": identity, "panda": identity}[arm_type].copy()
+
     def connect(self):
         pass
 

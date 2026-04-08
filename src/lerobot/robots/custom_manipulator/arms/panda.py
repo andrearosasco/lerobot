@@ -15,6 +15,8 @@ from pink import Configuration
 from pink.solve_ik import solve_ik
 from pink.tasks import FrameTask, PostureTask
 from rclpy.node import Node
+from roboticstoolbox.tools import xacro
+from roboticstoolbox.tools.data import rtb_path_to_datafile
 from scipy.spatial.transform import Rotation as R
 
 from ..configs import ArmConfig
@@ -82,6 +84,7 @@ class Panda(Node):
     def __init__(self, config: PandaConfig = None, **kwargs):
         super().__init__('panda_client')
         self.config = config if config else PandaConfig()
+        self.end_effector_transform = np.eye(4)
         self._pin_model = None
         self._pin_data = None
         self._ik_task = None
@@ -92,17 +95,24 @@ class Panda(Node):
         self._debug = None
         self._debug_urdf_path = None
 
+        base = '/home/panda-admin/users/sberti/lerobot/src/lerobot/robots/custom_manipulator/arms/franka_description'
+        self.urdf_path = os.path.join(base, "robots", "panda.urdf")
+        self._debug = PandaDebugTools(
+            urdf_path=self.urdf_path,
+            enable_rerun_visualization=self.config.visualize,
+        )
+
         self.client_names = {}
         for name, type in Panda.interfaces.items():
             client = self.create_client(type, name)
             self.client_names[name] = client
 
+    def set_end_effector_transform(self, transform):
+        self.end_effector_transform = np.array(transform, dtype=float, copy=True)
+
     def _ensure_kinematics(self):
         if self._pin_model is not None:
             return
-
-        from roboticstoolbox.tools import xacro
-        from roboticstoolbox.tools.data import rtb_path_to_datafile
 
         base = os.path.join(rtb_path_to_datafile("xacro"), "franka_description")
         xml = xacro.main(os.path.join(base, "robots/panda_arm_hand.urdf.xacro"), tld_other=base)
@@ -118,18 +128,6 @@ class Panda(Node):
         self._wrist_frame_id = self._pin_model.getFrameId(wrist_frame)
         self._ik_task = FrameTask(wrist_frame, position_cost=1.0, orientation_cost=1.0)
         self._posture_task = PostureTask(cost=0.05, gain=0.1)
-        if self._debug is None:
-            debug_urdf_path = ""
-            if self.config.visualize:
-                debug_xml = xml.replace("package://franka_description/", f"{base}/")
-                self._debug_urdf_path = os.path.join(base, "robots", "panda_debug.urdf")
-                with open(self._debug_urdf_path, "w") as stream:
-                    stream.write(debug_xml)
-                debug_urdf_path = self._debug_urdf_path
-                self._debug = PandaDebugTools(
-                    urdf_path=debug_urdf_path,
-                    enable_rerun_visualization=self.config.visualize,
-                )
 
     def _joint_state_dict(self, q) -> dict[str, float]:
         self._ensure_kinematics()
@@ -141,9 +139,14 @@ class Panda(Node):
         pin.forwardKinematics(self._pin_model, self._pin_data, q)
         pin.updateFramePlacements(self._pin_model, self._pin_data)
         oMf = self._pin_data.oMf[self._wrist_frame_id]
-        position = np.asarray(oMf.translation, dtype=float).copy()
-        wrist_orientation = (HOME_ROT.inv() * R.from_matrix(np.asarray(oMf.rotation, dtype=float))).as_rotvec()
-        return position, wrist_orientation
+        wrist_position = np.asarray(oMf.translation, dtype=float).copy()
+        wrist_rotation = np.asarray(oMf.rotation, dtype=float)
+        tool_translation = self.end_effector_transform[:3, 3]
+        tool_rotation = self.end_effector_transform[:3, :3]
+        eef_position = wrist_position + wrist_rotation @ tool_translation
+        eef_rotation = wrist_rotation @ tool_rotation
+        eef_orientation = (HOME_ROT.inv() * R.from_matrix(eef_rotation)).as_rotvec()
+        return eef_position, eef_orientation
 
     def connect(self):
         for name, client in self.client_names.items():
@@ -181,20 +184,25 @@ class Panda(Node):
                 current_pos, current_axis_angle = self._forward_kinematics(qpos)
                 eef_pos = current_pos + eef_pos
                 target_rot = R.from_rotvec(axis_angle) * R.from_rotvec(current_axis_angle)
-                axis_angle = target_rot.as_rotvec()
-                eef_rot = (HOME_ROT * target_rot).as_matrix()
             else:
-                eef_rot = (HOME_ROT * R.from_rotvec(axis_angle)).as_matrix()
+                target_rot = R.from_rotvec(axis_angle)
+
+            axis_angle = target_rot.as_rotvec()
+            eef_rot = (HOME_ROT * target_rot).as_matrix()
+            tool_translation = self.end_effector_transform[:3, 3]
+            tool_rotation = self.end_effector_transform[:3, :3]
+            wrist_rot = eef_rot @ tool_rotation.T
+            wrist_pos = eef_pos - wrist_rot @ tool_translation
 
             # IK
-            q_desired = self.compute_ik(eef_pos, eef_rot, q_seed=qpos)
+            q_desired = self.compute_ik(wrist_pos, wrist_rot, q_seed=qpos)
 
         request = Panda.interfaces['apply_commands'].Request()
         # Ensure q_desired is a list or array
         if isinstance(q_desired, np.ndarray):
             q_desired = q_desired.tolist()
 
-        if q_desired is not None and self._debug is not None:
+        if q_desired is not None:
             wrist_position, wrist_orientation = self._forward_kinematics(debug_state_q)
             self._debug.log_state(
                 joints=self._joint_state_dict(debug_state_q),

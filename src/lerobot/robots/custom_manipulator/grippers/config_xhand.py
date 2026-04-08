@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from ..configs import GripperConfig
 
 TIPS = ("thumb", "index", "middle", "ring", "little")
-TIP_ACTIONS = {f"action.fingertip.{tip}.{axis}": float for tip in TIPS for axis in "xyz"}
+TIP_ACTIONS = {f"action.{tip}.position.{axis}": float for tip in TIPS for axis in "xyz"}
 DEFAULT_TIP_LINK_NAMES = {
     "thumb": "right_hand_thumb_rota_tip",
     "index": "right_hand_index_rota_tip",
@@ -39,6 +39,8 @@ COMMAND_INDEX_BY_DRIVER_NAME = {
 class XHandConfig(GripperConfig):
     hand_id: int = 0
     control_mode: int = 3
+    use_delta_actions: bool = False
+    read_tactile_sensors: bool = False
     kp: int = 50
     ki: int = 0
     kd: int = 0
@@ -50,7 +52,7 @@ class XHandConfig(GripperConfig):
     tip_link_names: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_TIP_LINK_NAMES))
     tip_scale_factors: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_TIP_SCALE_FACTORS))
     enable_tip_scale_tuner: bool = False
-    enable_rerun_visualization: bool = False
+    visualize: bool = False
 
     @property
     def type(self) -> str:

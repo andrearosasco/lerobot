@@ -2,6 +2,7 @@
 import rerun as rr
 from rerun.urdf import UrdfTree
 from scipy.spatial.transform import Rotation as R
+from ..rerun_blueprint_utils import send_custom_manipulator_blueprint
 
 HOME_ROT = R.from_rotvec([3.141592653589793, 0.0, 0.0])
 
@@ -15,11 +16,14 @@ class PandaDebugTools:
         self._step = 0
         self._enable_rerun_visualization = enable_rerun_visualization
         self.urdf_tree = None
+        self._root_frame = "tf#/panda/panda_link0"
 
         if self._enable_rerun_visualization:
-            rr.init("panda_debug", spawn=True)
-            rr.log_file_from_path(urdf_path, static=True)
-            self.urdf_tree = UrdfTree.from_file_path(urdf_path)
+            if not rr.is_enabled():
+                rr.init("custom_manipulator_debug", spawn=True)
+            self.urdf_tree = UrdfTree.from_file_path(urdf_path, entity_path_prefix="panda", frame_prefix="tf#/panda/")
+            self.urdf_tree.log_urdf_to_recording()
+            send_custom_manipulator_blueprint()
 
     def close(self):
         pass
@@ -43,19 +47,18 @@ class PandaDebugTools:
                 continue
 
             value = joints[joint.name]
-            rr.log("transforms", joint.compute_transform(value))
-            rr.log(f"/joints/{i}", rr.Scalars([value]))
+            rr.log("panda/transforms", joint.compute_transform(value))
+            rr.log(f"/panda/joints/{i}", rr.Scalars([value]))
 
         self._log_points("/target_eef", {"eef": target_eef_position} if target_eef_position is not None else {}, "target", [255, 80, 80], 0.01)
         self._log_points("/state_eef", {"eef": state_eef_position}, "state", [80, 170, 255], 0.01)
         if target_eef_position is not None and target_eef_orientation is not None:
-            rr.log("/target_eef/frame", rr.Arrows3D(origins=[target_eef_position] * 3, vectors=(0.04 * (HOME_ROT * R.from_rotvec(target_eef_orientation)).as_matrix().T).tolist(), colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]], radii=0.002), rr.CoordinateFrame("panda_link0"))
-        rr.log("/state_eef/frame", rr.Arrows3D(origins=[state_eef_position] * 3, vectors=(0.04 * (HOME_ROT * R.from_rotvec(state_eef_orientation)).as_matrix().T).tolist(), colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]], radii=0.002), rr.CoordinateFrame("panda_link0"))
+            rr.log("/target_eef/frame", rr.Arrows3D(origins=[target_eef_position] * 3, vectors=(0.04 * (HOME_ROT * R.from_rotvec(target_eef_orientation)).as_matrix().T).tolist(), colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]], radii=0.002), rr.CoordinateFrame(self._root_frame))
+        rr.log("/state_eef/frame", rr.Arrows3D(origins=[state_eef_position] * 3, vectors=(0.04 * (HOME_ROT * R.from_rotvec(state_eef_orientation)).as_matrix().T).tolist(), colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]], radii=0.002), rr.CoordinateFrame(self._root_frame))
         self._log_orientation("/target_eef/orientation", target_eef_orientation, "target_eef")
         self._log_orientation("/state_eef/orientation", state_eef_orientation, "state_eef")
 
-    @staticmethod
-    def _log_points(path: str, points: dict[str, list[float]], prefix: str, color: list[int], radius: float):
+    def _log_points(self, path: str, points: dict[str, list[float]], prefix: str, color: list[int], radius: float):
         if not points:
             return
 
@@ -68,7 +71,7 @@ class PandaDebugTools:
                 radii=radius,
                 colors=color,
             ),
-            rr.CoordinateFrame("panda_link0"),
+            rr.CoordinateFrame(self._root_frame),
         )
 
     @staticmethod

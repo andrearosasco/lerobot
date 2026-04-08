@@ -14,7 +14,11 @@ class DummyArmConfig(ArmConfig):
 class DummyArm:
     def __init__(self, config: DummyArmConfig | None = None):
         self.config = config if config else DummyArmConfig()
+        self._end_effector_transform = None
         self._state = {key: 0.0 for key in self.features}
+
+    def set_end_effector_transform(self, transform):
+        self._end_effector_transform = transform
 
     def connect(self):
         pass

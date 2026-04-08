@@ -1,9 +1,13 @@
 # pyright: reportMissingImports=false
+import numpy as np
 import rerun as rr
 from klampt.math import so3, vectorops
 from rerun.urdf import UrdfTree
 
 from .config_xhand import TIPS
+from ..rerun_blueprint_utils import send_custom_manipulator_blueprint
+
+PALM_TO_TARGET_ROT = np.array([[0, -1, 0], [-1, 0, 0], [0, 0, -1]])
 
 
 class XHandDebugTools:
@@ -25,11 +29,14 @@ class XHandDebugTools:
         self.root_frame = root_frame
         self.tips = tips
         self.urdf_tree = None
+        self._root_frame_id = "tf#/xhand/right_hand_link"
 
         if self._enable_rerun_visualization:
-            rr.init("xhand_debug", spawn=True)
-            rr.log_file_from_path(urdf_path, static=True)
-            self.urdf_tree = UrdfTree.from_file_path(urdf_path)
+            if not rr.is_enabled():
+                rr.init("custom_manipulator_debug", spawn=True)
+            self.urdf_tree = UrdfTree.from_file_path(urdf_path, entity_path_prefix="xhand", frame_prefix="tf#/xhand/")
+            self.urdf_tree.log_urdf_to_recording()
+            send_custom_manipulator_blueprint()
 
         if enable_tip_scale_tuner:
             import tkinter as tk
@@ -61,8 +68,9 @@ class XHandDebugTools:
 
     def log_state(
         self,
-        joints: list[float],
-        target_positions: dict[str, list[float]],
+        joints,
+        fingertip_values: dict[str, float],
+        forces: dict[str, float] | None = None,
     ):
         if not self._enable_rerun_visualization or self.urdf_tree is None:
             return
@@ -74,32 +82,39 @@ class XHandDebugTools:
             if joint.child_link not in joints:
                 continue
 
-            value = joints[joint.child_link].getValue()
-            rr.log("transforms", joint.compute_transform(value))
-            rr.log(f"/joints/{i}", rr.Scalars([value]))
+            value = joints[joint.child_link]
+            if hasattr(value, "getValue"):
+                value = value.getValue()
+            rr.log("xhand/transforms", joint.compute_transform(value))
+            rr.log(f"/xhand/joints/{i}", rr.Scalars([value]))
 
-        root_targets = {}
-        root_tip_positions = {}
-        if target_positions:
-            root_r, root_t = self.root_frame.getTransform()
-            palm_r, palm_t = self.palm_frame.getTransform()
-            root_r_inv = so3.inv(root_r)
-            palm_r_root = so3.mul(root_r_inv, palm_r)
-            palm_t_root = so3.apply(root_r_inv, vectorops.sub(palm_t, root_t))
-            root_targets = {
-                tip: [float(v) for v in vectorops.add(palm_t_root, so3.apply(palm_r_root, target_positions[tip]))]
-                for tip in target_positions
-            }
-            root_tip_positions = {
-                tip: [float(v) for v in so3.apply(root_r_inv, vectorops.sub(self.tips[tip].getTransform()[1], root_t))]
-                for tip in target_positions
-            }
-
-        self._log_points("/targets", root_targets, "target", [255, 80, 80], 0.005)
+        root_r, root_t = self.root_frame.getTransform(); root_r_inv = so3.inv(root_r)
+        palm_r, palm_t = self.palm_frame.getTransform()
+        palm_r_root = so3.mul(root_r_inv, palm_r)
+        palm_t_root = so3.apply(root_r_inv, vectorops.sub(palm_t, root_t))
+        root_tip_positions = {
+            tip: [float(v) for v in vectorops.add(palm_t_root, so3.apply(palm_r_root, (PALM_TO_TARGET_ROT @ (np.array([fingertip_values[f"{tip}.position.{axis}"] for axis in "xyz"]) * self.tip_scale_factors[tip])).tolist()))]
+            for tip in TIPS
+        }
         self._log_points("/tips", root_tip_positions, "tip", [80, 170, 255], 0.004)
+        if forces:
+            rr.log("/forces", rr.Arrows3D(origins=[root_tip_positions[tip] for tip in TIPS], vectors=[[0.002 * float(v) for v in so3.apply(so3.mul(root_r_inv, self.tips[tip].getTransform()[0]), [forces[f"{tip}.force.{axis}"] for axis in "xyz"])] for tip in TIPS], colors=[[255, 80, 80]] * len(TIPS), radii=0.002), rr.CoordinateFrame(self._root_frame_id))
 
-    @staticmethod
-    def _log_points(path: str, points_by_tip: dict[str, list[float]], prefix: str, color: list[int], radius: float):
+    def log_targets(self, target_positions: dict[str, list[float]] | None):
+        if not self._enable_rerun_visualization or self.urdf_tree is None or not target_positions:
+            return
+
+        root_r, root_t = self.root_frame.getTransform(); root_r_inv = so3.inv(root_r)
+        palm_r, palm_t = self.palm_frame.getTransform()
+        palm_r_root = so3.mul(root_r_inv, palm_r)
+        palm_t_root = so3.apply(root_r_inv, vectorops.sub(palm_t, root_t))
+        root_targets = {
+            tip: [float(v) for v in vectorops.add(palm_t_root, so3.apply(palm_r_root, target_positions[tip]))]
+            for tip in target_positions
+        }
+        self._log_points("/targets", root_targets, "target", [255, 80, 80], 0.005)
+
+    def _log_points(self, path: str, points_by_tip: dict[str, list[float]], prefix: str, color: list[int], radius: float):
         if not points_by_tip:
             return
 
@@ -112,5 +127,5 @@ class XHandDebugTools:
                 radii=radius,
                 colors=color,
             ),
-            rr.CoordinateFrame("right_hand_link"),
+            rr.CoordinateFrame(self._root_frame_id),
         )
