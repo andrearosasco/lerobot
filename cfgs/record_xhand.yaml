@@ -2,12 +2,18 @@ robot:
   arm:
     type: panda
     use_delta_actions: true
+    visualize: true
+
   gripper:
-    type: robotiq
+    type: xhand
+    use_delta_actions: true
+    read_tactile_sensors: true
+    visualize: true
+    
   cameras:
     wrist:
       type: intelrealsense
-      serial_number_or_name: "909522060544"
+      serial_number_or_name: "943222071614"
       use_depth: false
       width: 640
       height: 480
@@ -21,15 +27,15 @@ robot:
       fps: 30
 
 teleop:
-  type: metaquest_rail
+  type: metareader
 
 dataset:
-  repo_id: steb6/pick_bread_final
-  single_task: Pick the bread and place it in the plate.
+  repo_id: steb6/test_xhand_tactile
+  single_task: Move 
   fps: 10
   episode_time_s: 2000
   reset_time_s: 0
-  num_episodes: 50
+  num_episodes: 10
   video: true
   push_to_hub: true
   private: false
@@ -39,7 +45,7 @@ dataset:
   rename_map: {}
 
 teleop_action_processor:
-  steps: [clutch_processor, arm_absolute_to_delta]
+  steps: [clutch_processor, arm_absolute_to_delta, hand_absolute_to_delta]
 
 robot_action_processor:
   steps: []
@@ -49,4 +55,4 @@ robot_observation_processor:
 
 display_data: true
 play_sounds: true
-resume: true
+resume: false

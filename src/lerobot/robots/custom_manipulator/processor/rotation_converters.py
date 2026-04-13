@@ -24,7 +24,7 @@ class AxisAngleToRot6D(ProcessorStep):
         
         # Add 6D keys
         for i in range(6):
-            new_action[f"orientation_6d.{i}"] = rot_6d[i]
+            new_action[f"orientation_6d.{i}"] = rot_6d[i].item()
             
         transition["action"] = new_action
         return transition
@@ -37,21 +37,23 @@ class AxisAngleToRot6D(ProcessorStep):
 
             # Check if we have the axis-angle keys
             if "action.orientation.x" in action_features:
-                # Get the type from one of them
-                dtype = action_features["action.orientation.x"]
+                action_features_keys = list(action_features.keys())
+                action_features_values = list(action_features.values())
 
-                # Remove axis-angle keys
-                for key in ["action.orientation.x", "action.orientation.y", "action.orientation.z"]:
-                    if key in action_features:
-                        del action_features[key]
+                start = action_features_keys.index("action.orientation.x")
+                end = action_features_keys.index("action.orientation.z")
 
                 # Add 6D keys
+                rot6d = {}
+                dtype = action_features["action.orientation.x"]
                 for i in range(6):
-                    action_features[f"action.orientation_6d.{i}"] = PolicyFeature(type=dtype, shape=())
+                    rot6d[f"action.orientation_6d.{i}"] = PolicyFeature(type=dtype, shape=())
 
-                gripper = action_features['action.gripper']
-                del action_features['action.gripper']
-                action_features['action.gripper'] = gripper
+                updated_keys = action_features_keys[:start] + list(rot6d.keys()) + action_features_keys[end+1:]
+                updated_values = action_features_values[:start] + list(rot6d.values()) + action_features_values[end+1:]
+
+                updated_action_features = dict(zip(updated_keys, updated_values))
+                features[PipelineFeatureType.ACTION] = updated_action_features
 
         return features
 

@@ -48,6 +48,9 @@ class CustomManipulator(Robot):
 
         self.arm_interface = make_arm_from_config(config.arm)
         self.gripper_interface = make_gripper_from_config(config.gripper)
+        self.arm_interface.set_end_effector_transform(
+            self.gripper_interface.get_end_effector_transform(config.arm.type)
+        )
             
         self.cameras = make_cameras_from_configs(config.cameras)
         
@@ -67,15 +70,16 @@ class CustomManipulator(Robot):
 
     @property
     def action_features(self) -> dict:
-        return {
+        features = {
             "action.position.x": float,
             "action.position.y": float,
             "action.position.z": float,
             "action.orientation.x": float,
             "action.orientation.y": float,
             "action.orientation.z": float,
-            "action.gripper": float,
         }
+        features.update(self.gripper_interface.action_features)
+        return features
 
     @property
     def is_connected(self) -> bool:
@@ -136,9 +140,8 @@ class CustomManipulator(Robot):
 
         # Apply commands
         self.arm_interface.apply_commands(action=action)
-        
-        grip = action["gripper"]
-        self.gripper_interface.apply_commands(gripper_state=grip)
+
+        self.gripper_interface.apply_commands(action=action)
         
         # Wait for step time (simple rate limiting)
         # In original code: while (time.perf_counter() - self.last_step) < (1/20): pass
@@ -154,4 +157,3 @@ class CustomManipulator(Robot):
         
         self.arm_interface.reset()
         self.gripper_interface.reset()
-

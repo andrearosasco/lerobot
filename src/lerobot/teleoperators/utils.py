@@ -13,14 +13,12 @@
 # limitations under the License.
 
 from enum import Enum
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 from lerobot.utils.import_utils import make_device_from_device_class
 
 from .config import TeleoperatorConfig
-
-if TYPE_CHECKING:
-    from .teleoperator import Teleoperator
+from .teleoperator import Teleoperator
 
 
 class TeleopEvents(Enum):
@@ -33,7 +31,7 @@ class TeleopEvents(Enum):
     TERMINATE_EPISODE = "terminate_episode"
 
 
-def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
+def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
     # TODO(Steven): Consider just using the make_device_from_device_class for all types
     if config.type == "keyboard":
         from .keyboard import KeyboardTeleop
@@ -43,16 +41,12 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .koch_leader import KochLeader
 
         return KochLeader(config)
-    elif config.type == "omx_leader":
-        from .omx_leader import OmxLeader
-
-        return OmxLeader(config)
     elif config.type == "so100_leader":
-        from .so_leader import SO100Leader
+        from .so100_leader import SO100Leader
 
         return SO100Leader(config)
     elif config.type == "so101_leader":
-        from .so_leader import SO101Leader
+        from .so101_leader import SO101Leader
 
         return SO101Leader(config)
     elif config.type == "mock_teleop":
@@ -75,32 +69,32 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .homunculus import HomunculusArm
 
         return HomunculusArm(config)
-    elif config.type == "unitree_g1":
-        from .unitree_g1 import UnitreeG1Teleoperator
+    elif config.type == "bi_so100_leader":
+        from .bi_so100_leader import BiSO100Leader
 
-        return UnitreeG1Teleoperator(config)
-    elif config.type == "bi_so_leader":
-        from .bi_so_leader import BiSOLeader
-
-        return BiSOLeader(config)
-    elif config.type == "reachy2_teleoperator":
-        from .reachy2_teleoperator import Reachy2Teleoperator
-
-        return Reachy2Teleoperator(config)
-    elif config.type == "openarm_leader":
-        from .openarm_leader import OpenArmLeader
-
-        return OpenArmLeader(config)
-    elif config.type == "bi_openarm_leader":
-        from .bi_openarm_leader import BiOpenArmLeader
-
-        return BiOpenArmLeader(config)
+        return BiSO100Leader(config)
     elif config.type == "metaquest":
         from .metaquest import MetaQuest
 
         return MetaQuest(config)
+    elif config.type == "bimanualkeyboard":
+        from .metaquest import BimanualKeyboard
+
+        return BimanualKeyboard(config)
+    elif config.type == "reachy2_teleoperator":
+        from .reachy2_teleoperator import Reachy2Teleoperator
+
+        return Reachy2Teleoperator(config)
+    elif config.type == "metareader":
+        from .metareader import MetaReaderTeleoperator
+
+        return MetaReaderTeleoperator(config)
+    elif config.type == "metaquest_rail":
+        from .metaquest import MetaQuestRail
+
+        return MetaQuestRail(config)
     else:
         try:
-            return cast("Teleoperator", make_device_from_device_class(config))
+            return cast(Teleoperator, make_device_from_device_class(config))
         except Exception as e:
             raise ValueError(f"Error creating robot with config {config}: {e}") from e

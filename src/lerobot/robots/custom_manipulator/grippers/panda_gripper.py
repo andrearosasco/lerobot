@@ -34,6 +34,9 @@ class PandaGripper(Node):
             client = self.create_client(type, name)
             self.client_names[name] = client
 
+    def get_end_effector_transform(self, arm_type: str) -> np.ndarray:
+        return {"panda": np.eye(4)}[arm_type].copy()
+
     def connect(self):
         for name, client in self.client_names.items():
              if not client.wait_for_service(timeout_sec=1.0):
@@ -44,9 +47,9 @@ class PandaGripper(Node):
         rclpy.spin_until_future_complete(self, future)
         return future.result().success
 
-    def apply_commands(self, gripper_state: float, speed: float = None, force: float = None):
+    def apply_commands(self, action=None, speed: float = None, force: float = None):
         request = PandaGripper.interfaces['apply_commands_gripper'].Request()
-        request.command = PandaGripperCommand(width=float(gripper_state < 0.1))
+        request.command = PandaGripperCommand(width=float(action < 0.1))
         
         future = self.client_names['apply_commands_gripper'].call_async(request)
         rclpy.spin_until_future_complete(self, future)
@@ -72,4 +75,10 @@ class PandaGripper(Node):
     def features(self) -> dict:
         return {
             "gripper": float,
+        }
+
+    @property
+    def action_features(self) -> dict:
+        return {
+            "action.gripper": float,
         }

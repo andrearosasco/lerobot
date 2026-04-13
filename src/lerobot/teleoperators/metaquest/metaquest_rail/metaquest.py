@@ -25,6 +25,8 @@ from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.teleoperators.teleoperator import Teleoperator
 from .configuration_metaquest import MetaQuestRailConfig
 
+HOME_ROT = R.from_rotvec([np.pi, 0.0, 0.0])
+
 try:
     from oculus_reader import OculusReader
 except ImportError:
@@ -39,11 +41,11 @@ def vrbehind2mj(pose):
 
     mat = np.zeros([3, 3])
     mat[0][:] = +1.*pose[2][:3]
-    mat[1][:] = -1.*pose[0][:3]
-    mat[2][:] = -1.*pose[1][:3]
+    mat[1][:] = +1.*pose[0][:3]
+    mat[2][:] = +1.*pose[1][:3]
 
     # Convert matrix to axis-angle
-    r = R.from_matrix(mat)
+    r = HOME_ROT.inv() * R.from_matrix(mat)
     axis_angle = r.as_rotvec()
     return pos, axis_angle
 

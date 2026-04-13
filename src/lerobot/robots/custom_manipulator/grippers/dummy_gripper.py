@@ -15,6 +15,10 @@ class DummyGripper:
     def __init__(self, config: DummyGripperConfig = None):
         self.config = config if config else DummyGripperConfig()
 
+    def get_end_effector_transform(self, arm_type: str) -> np.ndarray:
+        identity = np.eye(4)
+        return {"dummy": identity, "panda": identity}[arm_type].copy()
+
     def connect(self):
         pass
 
@@ -27,14 +31,16 @@ class DummyGripper:
     def reset(self):
         pass
 
-    def apply_commands(self, width: float, speed: float = None, force: float = None):
+    def apply_commands(self, action=None, speed: float = None, force: float = None):
         pass
 
     @property
+    def action_features(self) -> dict:
+        return {}
+
+    @property
     def features(self) -> dict:
-        return {
-            "gripper.pos": float,
-        }
+        return {}
 
     def get_sensors(self):
         return {'grip_joint_pos': np.array([0.0])}

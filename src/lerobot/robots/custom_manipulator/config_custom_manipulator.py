@@ -19,7 +19,8 @@ from dataclasses import dataclass, field
 from lerobot.cameras import CameraConfig
 from lerobot.cameras.realsense import RealSenseCameraConfig
 from .configs import ArmConfig, GripperConfig
-from .grippers.dummy import DummyGripperConfig
+from .arms.dummy import DummyArmConfig
+from .grippers import DummyGripperConfig
 from .arms.panda import PandaConfig
 from ..config import RobotConfig
 
@@ -28,13 +29,10 @@ from ..config import RobotConfig
 @dataclass
 class CustomManipulatorConfig(RobotConfig):
     # arm
-    arm: ArmConfig
-
-    # cameras
-    cameras: dict[str, CameraConfig] = field(default_factory=dict)
-    
+    arm: ArmConfig = field(default_factory=DummyArmConfig)    
     # gripper
     gripper: GripperConfig = field(default_factory=DummyGripperConfig)
-
+    # cameras
+    cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
 

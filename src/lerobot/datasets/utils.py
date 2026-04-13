@@ -49,7 +49,7 @@ from lerobot.utils.utils import SuppressProgressBars, is_valid_numpy_dtype_strin
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of files per chunk
 DEFAULT_DATA_FILE_SIZE_IN_MB = 100  # Max size per file
-DEFAULT_VIDEO_FILE_SIZE_IN_MB = 200  # Max size per file
+DEFAULT_VIDEO_FILE_SIZE_IN_MB = 500  # Max size per file
 
 INFO_PATH = "meta/info.json"
 STATS_PATH = "meta/stats.json"
@@ -60,7 +60,6 @@ VIDEO_DIR = "videos"
 
 CHUNK_FILE_PATTERN = "chunk-{chunk_index:03d}/file-{file_index:03d}"
 DEFAULT_TASKS_PATH = "meta/tasks.parquet"
-DEFAULT_SUBTASKS_PATH = "meta/subtasks.parquet"
 DEFAULT_EPISODES_PATH = EPISODES_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_DATA_PATH = DATA_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_VIDEO_PATH = VIDEO_DIR + "/{video_key}/" + CHUNK_FILE_PATTERN + ".mp4"
@@ -122,9 +121,19 @@ def load_nested_dataset(
         raise FileNotFoundError(f"Provided directory does not contain any parquet file: {pq_dir}")
 
     with SuppressProgressBars():
-        # We use .from_parquet() memory-mapped loading for efficiency
-        filters = pa_ds.field("episode_index").isin(episodes) if episodes is not None else None
-        return Dataset.from_parquet([str(path) for path in paths], filters=filters, features=features)
+        # When no filtering needed, Dataset uses memory-mapped loading for efficiency
+        # PyArrow loads the entire dataset into memory
+        if episodes is None:
+            return Dataset.from_parquet([str(path) for path in paths], features=features)
+
+        arrow_dataset = pa_ds.dataset(paths, format="parquet")
+        filter_expr = pa_ds.field("episode_index").isin(episodes)
+        table = arrow_dataset.to_table(filter=filter_expr)
+
+        if features is not None:
+            table = table.cast(features.arrow_schema)
+
+        return Dataset(table)
 
 
 def get_parquet_num_frames(parquet_path: str | Path) -> int:
@@ -342,14 +351,6 @@ def write_tasks(tasks: pandas.DataFrame, local_dir: Path) -> None:
 def load_tasks(local_dir: Path) -> pandas.DataFrame:
     tasks = pd.read_parquet(local_dir / DEFAULT_TASKS_PATH)
     return tasks
-
-
-def load_subtasks(local_dir: Path) -> pandas.DataFrame | None:
-    """Load subtasks from subtasks.parquet if it exists."""
-    subtasks_path = local_dir / DEFAULT_SUBTASKS_PATH
-    if subtasks_path.exists():
-        return pd.read_parquet(subtasks_path)
-    return None
 
 
 def write_episodes(episodes: Dataset, local_dir: Path) -> None:
@@ -687,7 +688,18 @@ def build_dataset_frame(
         if key in DEFAULT_FEATURES or not key.startswith(prefix):
             continue
         elif ft["dtype"] == "float32" and len(ft["shape"]) == 1:
-            frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
+            # The names in ft["names"] should match keys in values
+            # If they don't exist directly, skip this feature
+            try:
+                frame[key] = np.array([values[name if name in values or prefix != OBS_STR else f"state.{name}"] for name in ft["names"]], dtype=np.float32)
+            except KeyError as e:
+                # Debug: print what keys are available vs what we're looking for
+                missing_key = str(e).strip("'")
+                available_keys = list(values.keys())
+                print(f"Missing key: {missing_key}")
+                print(f"Available keys: {available_keys}")
+                print(f"Feature names: {ft['names']}")
+                raise e
         elif ft["dtype"] in ["image", "video"]:
             frame[key] = values[key.removeprefix(f"{prefix}.images.")]
 
@@ -1171,21 +1183,12 @@ def validate_episode_buffer(episode_buffer: dict, total_episodes: int, features:
         )
 
 
-def to_parquet_with_hf_images(
-    df: pandas.DataFrame, path: Path, features: datasets.Features | None = None
-) -> None:
+def to_parquet_with_hf_images(df: pandas.DataFrame, path: Path) -> None:
     """This function correctly writes to parquet a panda DataFrame that contains images encoded by HF dataset.
     This way, it can be loaded by HF dataset and correctly formatted images are returned.
-
-    Args:
-        df: DataFrame to write to parquet.
-        path: Path to write the parquet file.
-        features: Optional HuggingFace Features schema. If provided, ensures image columns
-                  are properly typed as Image() in the parquet schema.
     """
     # TODO(qlhoest): replace this weird synthax by `df.to_parquet(path)` only
-    ds = datasets.Dataset.from_dict(df.to_dict(orient="list"), features=features)
-    ds.to_parquet(path)
+    datasets.Dataset.from_dict(df.to_dict(orient="list")).to_parquet(path)
 
 
 def item_to_torch(item: dict) -> dict:

@@ -2,6 +2,7 @@ robot:
   arm:
     type: panda
     use_delta_actions: true
+    visualize: true
   gripper:
     type: robotiq
   cameras:
@@ -20,14 +21,12 @@ robot:
       height: 480
       fps: 30
 
-teleop:
-  type: metaquest_rail
 
 dataset:
-  repo_id: steb6/pick_bread_final
+  repo_id: ar0s/eval_groot_pick_bread
   single_task: Pick the bread and place it in the plate.
   fps: 10
-  episode_time_s: 2000
+  episode_time_s: 18
   reset_time_s: 0
   num_episodes: 50
   video: true
@@ -38,15 +37,16 @@ dataset:
   video_encoding_batch_size: 1
   rename_map: {}
 
-teleop_action_processor:
-  steps: [clutch_processor, arm_absolute_to_delta]
+policy:
+  type: groot
+  pretrained_path: ar0s/groot_pick_bread_dagger
 
-robot_action_processor:
-  steps: []
+# teleop:
+#   type: metaquest_rail
 
-robot_observation_processor:
-  steps: []
+# teleop_action_processor:
+#   steps: [clutch_processor, arm_absolute_to_delta]
 
 display_data: true
 play_sounds: true
-resume: true
+resume: false

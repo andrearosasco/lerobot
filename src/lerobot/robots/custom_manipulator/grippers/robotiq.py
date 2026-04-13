@@ -21,6 +21,10 @@ class RobotiqConfig(GripperConfig):
         return "robotiq"
 
 class Robotiq(Node):
+    end_effector_transforms = {
+        "panda": np.eye(4),
+    }
+
     def __init__(self, config: RobotiqConfig = None, **kwargs):
         super().__init__('robotiq_action_client')
         self.config = config if config else RobotiqConfig()
@@ -28,9 +32,12 @@ class Robotiq(Node):
         self.gripper_pub = self.create_publisher(GripperCmd, '/gripper/cmd', 1)
         self.gripper_state = None
 
-    def apply_commands(self, gripper_state:float, speed:float=None, force:float=None):
+    def get_end_effector_transform(self, arm_type: str) -> np.ndarray:
+        return self.end_effector_transforms[arm_type].copy()
+
+    def apply_commands(self, action=None, speed:float=None, force:float=None):
         cmd_msg = GripperCmd()
-        cmd_msg.position = float((1 - gripper_state) > 0.5)
+        cmd_msg.position = float((1 - action['gripper']) > 0.5)
         cmd_msg.force = force if force is not None else self.config.force
         cmd_msg.speed = speed if speed is not None else self.config.speed
         self.gripper_pub.publish(cmd_msg)
@@ -48,9 +55,10 @@ class Robotiq(Node):
         self.reset()
 
     def reset(self, width=0.1, **kwargs):
-        self.apply_commands(gripper_state=1.0)
+
+        self.apply_commands({'gripper': 1.0})
         time.sleep(2)
-        self.apply_commands(gripper_state=0.0)
+        self.apply_commands({'gripper': 0.0})
         time.sleep(2)
 
     def _state_topic_callback(self, msg):
@@ -62,4 +70,10 @@ class Robotiq(Node):
     def features(self) -> dict:
         return {
             "gripper": float,
+        }
+
+    @property
+    def action_features(self) -> dict:
+        return {
+            "action.gripper": float,
         }
