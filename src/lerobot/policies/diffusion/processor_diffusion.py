@@ -21,7 +21,6 @@ import torch
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
-    ImageCropResizeProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
@@ -47,10 +46,9 @@ def make_diffusion_pre_post_processors(
 
     The pre-processing pipeline prepares the input data for the model by:
     1. Renaming features.
-    2. Resizing images (if resize_shape is specified in config).
+    2. Normalizing the input and output features based on dataset statistics.
     3. Adding a batch dimension.
     4. Moving the data to the specified device.
-    5. Normalizing the input and output features based on dataset statistics.
 
     The post-processing pipeline handles the model's output by:
     1. Moving the data to the CPU.
@@ -68,13 +66,6 @@ def make_diffusion_pre_post_processors(
 
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
-    ]
-    
-    # Add image resize step if resize_shape is specified
-    if config.resize_shape is not None:
-        input_steps.append(ImageCropResizeProcessorStep(resize_size=config.resize_shape))
-    
-    input_steps.extend([
         AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=config.device),
         NormalizerProcessorStep(
@@ -82,7 +73,7 @@ def make_diffusion_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-    ])
+    ]
     output_steps = [
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
