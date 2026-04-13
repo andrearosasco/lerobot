@@ -2,38 +2,6 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Python Debugger: Remote Attach",
-      "type": "debugpy",
-      "request": "attach",
-      "connect": {
-        "host": "localhost",
-        "port": 5678
-      },
-      "pathMappings": [
-        {
-          "localRoot": "${workspaceFolder}",
-          "remoteRoot": "."
-        }
-      ]
-    },
-    {
-      "name": "Python Debugger: Current File with Arguments",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${file}",
-      "console": "integratedTerminal",
-      "args": "${command:pickArgs}"
-    },
-    {
-      "name": "Split dataset",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "/home/sberti/metaCub/split_lerobot_dataset_by_action.py",
-      "console": "integratedTerminal",
-      "python": "/home/sberti/.local/share/mamba/envs/lerobot/bin/python",
-      "cwd": "/home/sberti/metaCub"
-    },
-    {
       "name": "Test",
       "type": "debugpy",
       "request": "launch",
@@ -42,14 +10,28 @@
       "env": {
         "PYTHONPATH": "${workspaceFolder}/src"
       },
-      // "python": "/home/ergocub/mambaforge/envs/lerobot/bin/python",
       "preLaunchTask": "clear-test",
       "args": [
-        "--config_path=cfgs/eval/eval_gr00t.yaml"
+        "--robot.type=ergocub",
+        "--robot.remote_prefix=/ergocubSim",
+        "--robot.local_prefix=/lerobot",
+        "--robot.cameras={ external: {\"type\": \"yarp\", \"yarp_name\": \"camera\", \"width\": 640, \"height\": 480, \"fps\": 30}, egocentric:{\"type\": \"yarp\", \"yarp_name\": \"ergocubSim/depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
+        "--robot.control_boards=[head,left_hand,right_hand,fingers]",
+        "--dataset.repo_id=ar0s/eval_redball_sim",
+        "--dataset.fps=10",
+        "--policy.path=ar0s/dp-redball",
+        "--policy.crop_shape=null",
+        "--policy.resize_shape=[240,320]",
+        "--policy.noise_scheduler_type=DDIM",
+        "--policy.num_inference_steps=10",
+        "--dataset.single_task=get the ball",
+        "--dataset.reset_time=0",
+        "--dataset.episode_time=10",
       ]
-    },
+    }
+    ,
     {
-      "name": "Train",
+      "name": "Train (DP)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_train.py",
@@ -59,16 +41,22 @@
       },
       "preLaunchTask": "clear-test",
       "args": [
-        "--policy.type=act",
-        "--policy.repo_id=HSP-IIT/trained_hri2_splitted",
+        "--batch_size=8",
+        "--num_workers=4",
+        "--policy.type=diffusion",
+        "--policy.repo_id=ar0s/dp-redball",
+        "--policy.crop_shape=null",
+        "--policy.resize_shape=[240,320]",
+        "--policy.noise_scheduler_type=DDIM",
+        "--policy.num_train_timesteps=100",
         "--dataset.repo_id=HSP-IIT/redball_sim",
         "--policy.device=cuda",
-        "--output_dir=checkpoints/hri2_splitted",
-        "--policy.use_language_conditioning=true"
+        "--output_dir=checkpoints/redball"
       ]
-    },
+    }
+    ,
     {
-      "name": "Record (SIM)",
+      "name": "Record",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_record.py",
@@ -81,19 +69,19 @@
         "--robot.type=ergocub",
         "--robot.remote_prefix=/ergocubSim",
         "--robot.local_prefix=/lerobot",
-        "--robot.cameras={egocentric:{\"type\": \"yarp\", \"yarp_name\": \"depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
+        "--robot.cameras={ external: {\"type\": \"yarp\", \"yarp_name\": \"camera\", \"width\": 640, \"height\": 480, \"fps\": 30}, egocentric:{\"type\": \"yarp\", \"yarp_name\": \"ergocubSim/depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
         "--robot.control_boards=[head,left_hand,right_hand,fingers,torso]",
         "--teleop.type=metaquest",
-        "--dataset.repo_id=steb6/test",
-        "--dataset.num_episodes=1",
+        "--dataset.repo_id=steb6/redball",
+        "--dataset.num_episodes=100",
         "--dataset.fps=10",
         "--dataset.reset_time=1",
-        "--dataset.episode_time=30",
+        "--dataset.episode_time=60",
         "--dataset.single_task=get the ball"
       ]
     },
     {
-      "name": "Record (REAL)",
+      "name": "Record Real",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_record.py",
@@ -106,33 +94,16 @@
         "--robot.type=ergocub",
         "--robot.remote_prefix=/ergocub",
         "--robot.local_prefix=/lerobot",
-        "--robot.cameras={egocentric:{\"type\": \"yarp\", \"yarp_name\": \"depthCamera/rgbImage:o\", \"width\": 640, \"height\": 480, \"fps\": 30}}",
-        "--robot.control_boards=[head,bimanual]",
-        "--robot.state_boards=[head,bimanual]",
+        "--robot.cameras={ external: {\"type\": \"yarp\", \"yarp_name\": \"depthCamera/rgbImage:o\", \"width\": 1280, \"height\": 720, \"fps\": 30}}",
+        "--robot.control_boards=[head,left_hand,right_hand,fingers,torso]",
         "--teleop.type=metaquest",
-        "--dataset.repo_id=steb6/ROBOARENA_ONLY_YAW_fixed_4",
-        "--dataset.num_episodes=1",
+        "--dataset.repo_id=steb6/redball_real",
+        "--dataset.num_episodes=50",
         "--dataset.fps=10",
-        "--dataset.reset_time=1",
-        "--dataset.episode_time=300",
-        "--dataset.single_task=Interact with the human."
+        "--dataset.reset_time=3",
+        "--dataset.episode_time=10",
+        "--dataset.single_task=get the ball"
       ]
-    },
-    {
-      "name": "Visualize dataset",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${workspaceFolder}/src/lerobot/scripts/lerobot_dataset_viz.py",
-      "console": "integratedTerminal",
-      "python": "/home/sberti/.local/share/mamba/envs/lerobot/bin/python",
-      "cwd": "/home/sberti/metaCub",
-      "env": {
-        "PYTHONPATH": "${workspaceFolder}/src"
-      },
-      "args": [
-        "--repo-id=steb6/hri_real_3"
-      ],
-      "justMyCode": false
     }
   ]
 }

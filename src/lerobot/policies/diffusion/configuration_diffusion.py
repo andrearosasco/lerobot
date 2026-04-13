@@ -55,8 +55,10 @@ class DiffusionConfig(PreTrainedConfig):
         normalization_mapping: A dictionary that maps from a str value of FeatureType (e.g., "STATE", "VISUAL") to
             a corresponding NormalizationMode (e.g., NormalizationMode.MIN_MAX)
         vision_backbone: Name of the torchvision resnet backbone to use for encoding images.
+        resize_shape: (H, W) shape to resize images to before cropping. This is applied in the preprocessor
+            pipeline and is useful when your dataset images are larger than needed. If None, no resizing is done.
         crop_shape: (H, W) shape to crop images to as a preprocessing step for the vision backbone. Must fit
-            within the image size. If None, no cropping is done.
+            within the image size (or resize_shape if specified). If None, no cropping is done.
         crop_is_random: Whether the crop should be random at training time (it's always a center crop in eval
             mode).
         pretrained_backbone_weights: Pretrained weights from torchvision to initialize the backbone.
@@ -114,7 +116,8 @@ class DiffusionConfig(PreTrainedConfig):
     # Architecture / modeling.
     # Vision backbone.
     vision_backbone: str = "resnet18"
-    crop_shape: tuple[int, int] | None = (84, 84)
+    resize_shape: tuple[int, int] | None = None
+    crop_shape: tuple[int, int] | None = None
     crop_is_random: bool = True
     pretrained_backbone_weights: str | None = None
     use_group_norm: bool = True

@@ -14,14 +14,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .metaquest_yarp.configuration_metaquest import MetaQuestConfig
-from .metaquest_keyboard.configuration_metaquest_keyboard import BimanualKeyboardConfig
-try:
-    from .metaquest_yarp.metaquest import MetaQuest
-except ImportError as e:
-    _yarp_import_error = e
-    class MetaQuest:
-        def __init__(self, *args, **kwargs):
-            raise _yarp_import_error
-from .metaquest_keyboard.metaquest_keyboard import BimanualKeyboard
+from dataclasses import dataclass, field
+from typing import List
 
+from lerobot.teleoperators.config import TeleoperatorConfig
+
+
+@TeleoperatorConfig.register_subclass("metaquest_rail")
+@dataclass
+class MetaQuestRailConfig(TeleoperatorConfig):
+    name: str = "metaquest_rail"
+    
+    # Connection timeout and retry settings
+    connection_timeout: float = 10.0  # seconds to wait for connection
+    retry_attempts: int = 3  # number of connection attempts
+    
+    # List of control boards for actions (kept for compatibility)
+    control_boards: List[str] = field(
+        default_factory=lambda: ["right_hand", "gripper"]
+    )

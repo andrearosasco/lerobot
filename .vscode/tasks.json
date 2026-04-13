@@ -19,7 +19,7 @@
     {
       "label": "clear-record",
       "type": "shell",
-      "command": "rm -rf /home/ergocub/.cache/huggingface/lerobot/steb6/TEST",
+      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/steb6/redball_real",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -33,7 +33,7 @@
     {
       "label": "clear-test",
       "type": "shell",
-      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/HSP-IIT/eval_test",
+      "command": "rm -rf /home/${USER}/.cache/huggingface/lerobot/ar0s/eval_redball_sim",
       "options": {
         "cwd": "${workspaceFolder}"
       },
