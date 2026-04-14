@@ -1,0 +1,41 @@
+robot:
+  arm:
+    type: panda
+    use_delta_actions: true
+    visualize: true
+  gripper:
+    type: robotiq
+  cameras:
+    wrist:
+      type: intelrealsense
+      serial_number_or_name: "909522060544"
+      use_depth: false
+      width: 640
+      height: 480
+      fps: 30
+    left:
+      type: intelrealsense
+      serial_number_or_name: "123622270882"
+      use_depth: false
+      width: 640
+      height: 480
+      fps: 30
+
+dataset:
+  repo_id: steb6/eval_pick_bread_dagger_panda
+  single_task: Pick the bread and place it in the plate.
+  fps: 10
+  episode_time_s: 18
+  reset_time_s: 0
+  num_episodes: 1
+  video: true
+  push_to_hub: false
+  private: false
+  num_image_writer_processes: 0
+  num_image_writer_threads_per_camera: 4
+  video_encoding_batch_size: 1
+  rename_map: {}
+
+display_data: true
+play_sounds: true
+resume: false
