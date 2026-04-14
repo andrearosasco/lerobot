@@ -1,7 +1,7 @@
 from lerobot.robots.custom_manipulator.grippers.panda_gripper import PandaGripperConfig
 from .arms.dummy import DummyArm, DummyArmConfig
 from .arms.panda import Panda, PandaConfig
-from .grippers import XHand, XHandConfig
+from .grippers.config_xhand import XHandConfig
 from .grippers.robotiq import Robotiq, RobotiqConfig
 from .grippers.dummy_gripper import DummyGripper, DummyGripperConfig
 
@@ -24,6 +24,14 @@ def make_gripper_from_config(config):
         from .grippers.panda_gripper import PandaGripper
         return PandaGripper(config)
     elif isinstance(config, XHandConfig):
+        try:
+            from .grippers.xhand import XHand
+        except ModuleNotFoundError as exc:
+            if exc.name == "xhand_controller":
+                raise ModuleNotFoundError(
+                    "xHand support requires the optional `xhand_controller` package."
+                ) from exc
+            raise
         return XHand(config)
     else:
         raise ValueError(f"Unknown gripper config type: {type(config)}")

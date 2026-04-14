@@ -1,19 +1,15 @@
 robot:
+  type: custom_manipulator
   arm:
     type: panda
     use_delta_actions: true
     visualize: true
-
   gripper:
-    type: xhand
-    use_delta_actions: true
-    read_tactile_sensors: true
-    visualize: true
-    
+    type: robotiq
   cameras:
     wrist:
       type: intelrealsense
-      serial_number_or_name: "943222071614"
+      serial_number_or_name: "909522060544"
       use_depth: false
       width: 640
       height: 480
@@ -26,18 +22,23 @@ robot:
       height: 480
       fps: 30
 
-teleop:
-  type: metareader
+teleop: null
+
+policy:
+  type: groot
+  pretrained_path: ar0s/groot_pick_bread_dagger
+  device: cuda
 
 dataset:
-  repo_id: steb6/test_xhand_tactile
-  single_task: Move 
+  repo_id: steb6/eval_groot_pick_bread_dagger
+  root: outputs/eval_groot_pick_bread_dagger
+  single_task: Pick the bread and place it in the plate.
   fps: 10
-  episode_time_s: 2000
+  episode_time_s: 120
   reset_time_s: 0
-  num_episodes: 10
+  num_episodes: 1
   video: true
-  push_to_hub: true
+  push_to_hub: false
   private: false
   num_image_writer_processes: 0
   num_image_writer_threads_per_camera: 4
@@ -45,7 +46,9 @@ dataset:
   rename_map: {}
 
 teleop_action_processor:
-  steps: [clutch_processor, arm_absolute_to_delta, hand_absolute_to_delta]
+  steps:
+    - clutch_processor
+    - arm_absolute_to_delta
 
 robot_action_processor:
   steps: []

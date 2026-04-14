@@ -51,8 +51,11 @@ class XHand:
         return self.end_effector_transforms[arm_type].copy()
 
     def connect(self):
+        print("[xhand] Enumerating EtherCAT devices...", flush=True)
         ports = self.xhand.enumerate_devices("EtherCAT")
+        print(f"[xhand] Enumerated ports: {ports}", flush=True)
         reply = self.xhand.open_ethercat(ports[0])
+        print("[xhand] open_ethercat returned.", flush=True)
 
         if reply.error_code != 0:
             raise RuntimeError(f"Failed to open xHand device: {reply.error_message}")
@@ -66,12 +69,15 @@ class XHand:
 
     def reset(self):
         # reset tactile sensors
+        print("[xhand] Resetting tactile sensors...", flush=True)
         for i in [17, 18, 19, 20, 21]:
             err_struct = self.xhand.reset_sensor(0,i)
 
         for joint in self.joints.values():
             joint.setValue(0.0)
+        print("[xhand] Sending zero command...", flush=True)
         self._send(self.joints)
+        print("[xhand] Reset complete.", flush=True)
 
     def _get_fingertips(self, joints: list[float]) -> dict[str, float]:
         previous_joint_values = {name: self.joints[name].getValue() for name in COMMAND_INDEX_BY_DRIVER_NAME}
@@ -132,9 +138,9 @@ class XHand:
     
     @property
     def features(self) -> dict:
-        features = {f"state.{tip}.position.{axis}": float for tip in TIPS for axis in "xyz"}
+        features = {f"{tip}.position.{axis}": float for tip in TIPS for axis in "xyz"}
         if self.config.read_tactile_sensors:
-            features.update({f"state.{tip}.force.{axis}": float for tip in TIPS for axis in "xyz"})
+            features.update({f"{tip}.force.{axis}": float for tip in TIPS for axis in "xyz"})
         return features
 
     def get_sensors(self):
@@ -166,8 +172,7 @@ class XHand:
             }
 
         fingertip_values = self._get_fingertips(joints)
-        sensor_values = fingertip_values | forces
-        sensors = {f"state.{key}": value for key, value in sensor_values.items()}
+        sensors = fingertip_values | forces
 
         self._debug.log_state(
             {name: joints[idx] for name, idx in COMMAND_INDEX_BY_DRIVER_NAME.items()},

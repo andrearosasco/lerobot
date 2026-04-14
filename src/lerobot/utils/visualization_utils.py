@@ -68,6 +68,7 @@ def log_rerun_data(
     observation: RobotObservation | None = None,
     action: RobotAction | None = None,
     compress_images: bool = False,
+    robot: Any | None = None,
 ) -> None:
     """
     Logs observation and action data to Rerun for real-time visualization.
@@ -86,7 +87,10 @@ def log_rerun_data(
         observation: An optional dictionary containing observation data to log.
         action: An optional dictionary containing action data to log.
         compress_images: Whether to compress images before logging to save bandwidth & memory in exchange for cpu and quality.
+        robot: Optional robot handle accepted for API compatibility with specialized loggers.
     """
+
+    del robot
 
     require_package("rerun-sdk", extra="viz", import_name="rerun")
     import rerun as rr

@@ -40,6 +40,28 @@ FPS_MIN_FRAMES = 4
 FPS_MAX_FRAMES = 256
 
 
+def _ensure_torch_batch(value):
+    if isinstance(value, torch.Tensor):
+        return value
+    if isinstance(value, list):
+        if not value:
+            return torch.empty(0)
+        tensors = [torch.as_tensor(v) for v in value]
+        first = tensors[0]
+        if first.ndim >= 4:
+            return torch.cat(tensors, dim=0)
+        return torch.stack(tensors, dim=0)
+    return torch.as_tensor(value)
+
+
+def _normalize_processor_outputs(batch: dict) -> dict:
+    if "pixel_values" in batch:
+        batch["pixel_values"] = _ensure_torch_batch(batch["pixel_values"])
+    if "image_sizes" in batch:
+        batch["image_sizes"] = _ensure_torch_batch(batch["image_sizes"])
+    return batch
+
+
 def to_rgb(pil_image: Image.Image) -> Image.Image:
     if pil_image.mode == "RGBA":
         white_background = Image.new("RGB", pil_image.size, (255, 255, 255))
@@ -220,8 +242,10 @@ class Eagle25VLProcessor(ProcessorMixin):
                     image_inputs = self.image_processor(
                         images=[image_list[idx_in_list]],
                         videos=None,
+                        return_tensors="pt",
                         **output_kwargs["images_kwargs"],
                     )
+                    image_inputs = _normalize_processor_outputs(image_inputs)
                     num_all_tiles = image_inputs["pixel_values"].shape[0]
                     special_placeholder = f"<image {idx_in_list + 1}>{self.image_start_token}{self.image_token * num_all_tiles * self.tokens_per_tile}{self.image_end_token}"
                     unified_frame_list.append(image_inputs)
@@ -231,8 +255,10 @@ class Eagle25VLProcessor(ProcessorMixin):
                     video_inputs = self.image_processor(
                         images=None,
                         videos=[video_list[idx_in_list]],
+                        return_tensors="pt",
                         **output_kwargs["videos_kwargs"],
                     )
+                    video_inputs = _normalize_processor_outputs(video_inputs)
                     num_all_tiles = video_inputs["pixel_values"].shape[0]
                     image_sizes = video_inputs["image_sizes"]
                     if timestamps_list is not None and -1 not in timestamps_list:

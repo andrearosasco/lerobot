@@ -6,7 +6,7 @@ from typing import Any
 
 from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.teleoperators.teleoperator import Teleoperator
-from lerobot.utils.control_utils import is_headless
+from lerobot.common.control_utils import is_headless
 
 from .configuration_metaquest_keyboard import BimanualKeyboardConfig
 

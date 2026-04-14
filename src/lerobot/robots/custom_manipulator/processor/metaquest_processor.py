@@ -4,7 +4,7 @@ from scipy.spatial.transform import Rotation as R
 from lerobot.processor import ProcessorStep, EnvTransition, ProcessorStepRegistry
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 
-FINGERTIP_KEYS = [(f"{tip}.position.{axis}", f"state.{tip}.position.{axis}") for tip in ("thumb", "index", "middle", "ring", "little") for axis in "xyz"]
+FINGERTIP_KEYS = [(f"{tip}.position.{axis}", f"{tip}.position.{axis}") for tip in ("thumb", "index", "middle", "ring", "little") for axis in "xyz"]
 
 
 @ProcessorStepRegistry.register("clutch_processor")

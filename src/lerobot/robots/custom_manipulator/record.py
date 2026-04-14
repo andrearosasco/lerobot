@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
 import logging
 import time
 from dataclasses import dataclass, field, asdict
@@ -21,6 +22,7 @@ from pathlib import Path
 from pprint import pformat
 
 from pyparsing import Optional
+import rclpy
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
@@ -32,10 +34,10 @@ from lerobot.cameras.realsense import RealSenseCameraConfig
 from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
-from lerobot.datasets.utils import combine_feature_dicts, build_dataset_frame
 from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.processor import (
     make_default_processors,
+    ProcessorStepRegistry,
     RobotAction,
     RobotObservation,
     RobotProcessorPipeline,
@@ -48,31 +50,37 @@ from lerobot.robots.custom_manipulator.config_custom_manipulator import CustomMa
 from lerobot.robots.custom_manipulator.arms.panda import PandaConfig
 from lerobot.robots.custom_manipulator.grippers.robotiq import RobotiqConfig
 from lerobot.robots.custom_manipulator.custom_manipulator import CustomManipulator
-from lerobot.robots.custom_manipulator.processor.metaquest_processor import MetaQuestRelativeMotionProcessor
+from lerobot.robots.custom_manipulator.processor.metaquest_processor import (
+    ArmAbsoluteToDelta,
+    ClutchProcessor,
+    HandAbsoluteToDelta,
+)
 from lerobot.robots.custom_manipulator.processor.rotation_converters import AxisAngleToRot6D, Rot6DToAxisAngle
-from lerobot.teleoperators.metaquest.metaquest_rail.configuration_metaquest import MetaQuestRailConfig
-from lerobot.teleoperators.metaquest.metaquest_rail.metaquest import MetaQuestRail
-from lerobot.utils.control_utils import (
+from lerobot.robots.config import RobotConfig
+from lerobot.common.control_utils import (
     init_keyboard_listener,
     is_headless,
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
 )
-from lerobot.utils.utils import log_say, init_logging, get_safe_torch_device
+from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.utils import log_say, init_logging
+from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 from lerobot.utils.constants import ACTION, OBS_STR
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.policies.utils import make_robot_action
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.processor.rename_processor import rename_stats
 from lerobot.datasets.image_writer import safe_stop_image_writer
-from lerobot.teleoperators import Teleoperator
-from lerobot.teleoperators.so100_leader import SO100Leader
-from lerobot.teleoperators.so101_leader import SO101Leader
+from lerobot.teleoperators import Teleoperator, TeleoperatorConfig, make_teleoperator_from_config
+from lerobot.teleoperators.metareader import MetaReaderConfig
+from lerobot.teleoperators.metaquest.metaquest_rail.configuration_metaquest import MetaQuestRailConfig  # noqa: F401
+from lerobot.teleoperators.so_leader import SO100Leader, SO101Leader
 from lerobot.teleoperators.koch_leader import KochLeader
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
-from lerobot.utils.control_utils import predict_action
+from lerobot.common.control_utils import predict_action
 from typing import Any, List
 
 import rerun as rr
@@ -264,7 +272,7 @@ def record_loop(
                 f"Loop took {dt_s*1000:.1f}ms vs target {target_dt_s*1000:.1f}ms."
             )
         
-        busy_wait(target_dt_s - dt_s)
+        precise_sleep(target_dt_s - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
 
@@ -318,7 +326,7 @@ class PolicyConfig(GrootConfig):
 
 @dataclass
 class RecordConfig:
-    robot: CustomManipulatorConfig = field(
+    robot: RobotConfig = field(
         default_factory=lambda: CustomManipulatorConfig(
             arm=PandaConfig(),
             gripper=RobotiqConfig(),
@@ -329,12 +337,29 @@ class RecordConfig:
         )
     )
     policy: PreTrainedConfig | None = None# field(default_factory=PolicyConfig) #None
-    teleop: MetaQuestRailConfig =  field(default_factory=MetaQuestRailConfig) 
+    teleop: TeleoperatorConfig | None = field(default_factory=MetaReaderConfig)
     dataset: DatasetRecordConfig = field(default_factory=DatasetRecordConfig)
     
     display_data: bool = True
     play_sounds: bool = True
     resume: bool = True
+    teleop_action_processor: dict[str, Any] = field(
+        default_factory=lambda: {
+            "steps": [
+                "clutch_processor",
+                "arm_absolute_to_delta",
+                {"class": "lerobot.robots.custom_manipulator.processor.rotation_converters.AxisAngleToRot6D"},
+            ]
+        }
+    )
+    robot_action_processor: dict[str, Any] = field(
+        default_factory=lambda: {
+            "steps": [
+                {"class": "lerobot.robots.custom_manipulator.processor.rotation_converters.Rot6DToAxisAngle"},
+            ]
+        }
+    )
+    robot_observation_processor: dict[str, Any] = field(default_factory=lambda: {"steps": []})
 
 
     def __post_init__(self):
@@ -345,6 +370,11 @@ class RecordConfig:
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
 
+        if not isinstance(self.robot, CustomManipulatorConfig):
+            raise ValueError(
+                f"Custom manipulator recording expects robot.type='custom_manipulator', got {self.robot.type!r}."
+            )
+
         if self.teleop is None and self.policy is None:
             raise ValueError("Choose a policy, a teleoperator or both to control the robot")
 
@@ -352,6 +382,42 @@ class RecordConfig:
     def __get_path_fields__(cls) -> list[str]:
         """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
         return ["policy"]
+
+
+def _instantiate_processor_step(step_spec: Any):
+    if isinstance(step_spec, str):
+        step_class = ProcessorStepRegistry.get(step_spec)
+        return step_class()
+
+    if isinstance(step_spec, dict):
+        if "registry_name" in step_spec:
+            step_class = ProcessorStepRegistry.get(step_spec["registry_name"])
+        elif "class" in step_spec:
+            module_path, class_name = step_spec["class"].rsplit(".", 1)
+            module = importlib.import_module(module_path)
+            step_class = getattr(module, class_name)
+        else:
+            raise ValueError(
+                f"Invalid processor step config {step_spec!r}. Expected a string, or a dict with "
+                f"'registry_name' or 'class'."
+            )
+        return step_class(**step_spec.get("config", {}))
+
+    raise TypeError(f"Unsupported processor step spec: {step_spec!r}")
+
+
+def _build_robot_processor_pipeline(
+    processor_cfg: dict[str, Any],
+    *,
+    to_transition,
+    to_output,
+) -> RobotProcessorPipeline:
+    steps = [_instantiate_processor_step(step_spec) for step_spec in processor_cfg.get("steps", [])]
+    return RobotProcessorPipeline(
+        steps=steps,
+        to_transition=to_transition,
+        to_output=to_output,
+    )
 
 @parser.wrap()
 def record(cfg: RecordConfig):
@@ -364,24 +430,29 @@ def record(cfg: RecordConfig):
     # Initialize robot and teleop from config
     robot = CustomManipulator(cfg.robot)
     if cfg.teleop is not None:
-        teleop = MetaQuestRail(cfg.teleop)
+        teleop = make_teleoperator_from_config(cfg.teleop)
     else:
         teleop = None
 
     # Create processors
-    # We replace the default teleop_action_processor with our custom one
-    _, _, robot_observation_processor = make_default_processors()
-    
-    robot_action_processor = RobotProcessorPipeline(
-        steps=[Rot6DToAxisAngle()],
+    teleop_action_processor, _, _ = make_default_processors()
+    teleop_action_processor = _build_robot_processor_pipeline(
+        cfg.teleop_action_processor,
         to_transition=robot_action_observation_to_transition,
-        to_output=transition_to_robot_action
+        to_output=transition_to_robot_action,
     )
 
-    teleop_action_processor = RobotProcessorPipeline(
-        steps=[MetaQuestRelativeMotionProcessor(), AxisAngleToRot6D()],
+    robot_action_processor = _build_robot_processor_pipeline(
+        cfg.robot_action_processor,
         to_transition=robot_action_observation_to_transition,
-        to_output=transition_to_robot_action
+        to_output=transition_to_robot_action,
+    )
+
+    _, _, default_robot_observation_processor = make_default_processors()
+    robot_observation_processor = _build_robot_processor_pipeline(
+        cfg.robot_observation_processor,
+        to_transition=default_robot_observation_processor.to_transition,
+        to_output=default_robot_observation_processor.to_output,
     )
 
     dataset_features = combine_feature_dicts(
@@ -440,13 +511,19 @@ def record(cfg: RecordConfig):
             },
         )
 
+    print("[record] Connecting robot...", flush=True)
     robot.connect()
+    print("[record] Robot connected.", flush=True)
     if cfg.teleop is not None:
+        print("[record] Connecting teleop...", flush=True)
         teleop.connect()
+        print("[record] Teleop connected.", flush=True)
 
     listener, events = init_keyboard_listener()
     
+    print("[record] Resetting robot...", flush=True)
     robot.reset()
+    print("[record] Robot reset complete.", flush=True)
 
     with VideoEncodingManager(dataset):
         recorded_episodes = 0

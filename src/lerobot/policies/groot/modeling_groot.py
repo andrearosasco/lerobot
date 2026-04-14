@@ -110,7 +110,7 @@ class GrootPolicy(PreTrainedPolicy):
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
-        strict: bool = True,
+        strict: bool = False,
         **kwargs,
     ) -> T:
         """Load Groot policy from pretrained model.
@@ -129,7 +129,9 @@ class GrootPolicy(PreTrainedPolicy):
             cache_dir: Cache directory path
             local_files_only: Only use local files
             revision: Specific model revision
-            strict: Strict state dict loading
+            strict: Strict state dict loading. Defaults to `False` because fine-tuned
+                GR00T checkpoints may omit duplicated tied weights such as
+                `embed_tokens.weight`.
             **kwargs: Additional arguments (passed to config)
 
         Returns:

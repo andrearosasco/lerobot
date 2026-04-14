@@ -1,6 +1,7 @@
 import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import rclpy
@@ -15,8 +16,13 @@ from pink import Configuration
 from pink.solve_ik import solve_ik
 from pink.tasks import FrameTask, PostureTask
 from rclpy.node import Node
-from roboticstoolbox.tools import xacro
-from roboticstoolbox.tools.data import rtb_path_to_datafile
+import xacro
+
+if not hasattr(np, "disp"):
+    np.disp = lambda message, device=None, linefeed=True: print(message, end="\n" if linefeed else "")
+if not hasattr(np, "int"):
+    np.int = int
+
 from scipy.spatial.transform import Rotation as R
 
 from ..configs import ArmConfig
@@ -95,8 +101,8 @@ class Panda(Node):
         self._debug = None
         self._debug_urdf_path = None
 
-        base = '/home/panda-admin/users/sberti/lerobot/src/lerobot/robots/custom_manipulator/arms/franka_description'
-        self.urdf_path = os.path.join(base, "robots", "panda.urdf")
+        base = Path(__file__).resolve().parent / "franka_description"
+        self.urdf_path = str(base / "robots" / "panda.urdf")
         self._debug = PandaDebugTools(
             urdf_path=self.urdf_path,
             enable_rerun_visualization=self.config.visualize,
@@ -114,18 +120,25 @@ class Panda(Node):
         if self._pin_model is not None:
             return
 
-        base = os.path.join(rtb_path_to_datafile("xacro"), "franka_description")
-        xml = xacro.main(os.path.join(base, "robots/panda_arm_hand.urdf.xacro"), tld_other=base)
-        full = pin.buildModelFromXML(xml)
+        base = Path(__file__).resolve().parent / "franka_description"
+        urdf_path = base / "robots" / "panda.urdf"
+        full = pin.buildModelFromUrdf(str(urdf_path))
 
         q0 = pin.neutral(full)
-        q0[-2:] = 0.04
-        jids = [full.getJointId("panda_finger_joint1"), full.getJointId("panda_finger_joint2")]
-        self._pin_model = pin.buildReducedModel(full, jids, q0)
+        if q0.shape[0] >= 2:
+            q0[-2:] = 0.04
+        jids = []
+        for joint_name in ("panda_finger_joint1", "panda_finger_joint2"):
+            joint_id = full.getJointId(joint_name)
+            if joint_id > 0 and joint_id not in jids:
+                jids.append(joint_id)
+        self._pin_model = pin.buildReducedModel(full, jids, q0) if jids else full
         self._pin_data = self._pin_model.createData()
         self._joint_names = tuple(self._pin_model.names[1:])
-        wrist_frame = "panda_hand"
+        wrist_frame = "panda_link8"
         self._wrist_frame_id = self._pin_model.getFrameId(wrist_frame)
+        if self._wrist_frame_id >= len(self._pin_model.frames):
+            self._wrist_frame_id = self._pin_model.getFrameId("panda_hand")
         self._ik_task = FrameTask(wrist_frame, position_cost=1.0, orientation_cost=1.0)
         self._posture_task = PostureTask(cost=0.05, gain=0.1)
 
@@ -154,9 +167,11 @@ class Panda(Node):
                 self.get_logger().info(f'service {name} not available, waiting again...')
 
         request = Panda.interfaces['connect'].Request()
+        print("[panda] Calling /connect service...", flush=True)
         self.future = self.client_names['connect'].call_async(request)
 
         rclpy.spin_until_future_complete(self, self.future)
+        print("[panda] /connect service returned.", flush=True)
         return self.future.result()
 
     def apply_commands(self, action=None, q_desired=None, kp=None, kd=None, gain=4.):
@@ -281,9 +296,11 @@ class Panda(Node):
         waypoints = generate_joint_space_min_jerk(current_pos, home_pos, time_to_go, dt)
         
         # Execute
+        print(f"[panda] Reset trajectory: {len(waypoints)} waypoints.", flush=True)
         for wp in waypoints:
             self.apply_commands(q_desired=wp['position'])
             time.sleep(dt)
+        print("[panda] Reset trajectory complete.", flush=True)
 
     @property
     def features(self) -> dict:

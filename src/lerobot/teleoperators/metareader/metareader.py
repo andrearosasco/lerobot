@@ -92,6 +92,7 @@ class MetaReaderTeleoperator(Teleoperator):
         del calibrate
         if self._is_connected:
             return
+        print("[metareader] Creating MetaReader client...", flush=True)
         self._reader = metareader.MetaReader(
             port=self.config.port,
             tcp_port=self.config.tcp_port,
@@ -99,14 +100,18 @@ class MetaReaderTeleoperator(Teleoperator):
             auto_adb_reverse=self.config.auto_adb_reverse,
         )
         if hasattr(self._reader, "__enter__"):
+            print("[metareader] Entering MetaReader context...", flush=True)
             self._reader.__enter__()
+        print("[metareader] Starting clutch listener...", flush=True)
         self._clutch.start()
+        print("[metareader] Waiting for first frame...", flush=True)
         deadline = time.monotonic() + self.config.connection_timeout_s
         while time.monotonic() < deadline:
             frame = self._reader.read_latest(timeout=self.config.read_timeout_s)
             if frame is not None:
                 self._last_action = self._frame_to_action(frame)
                 self._is_connected = True
+                print("[metareader] First frame received.", flush=True)
                 return
         self.disconnect()
         raise TimeoutError("MetaReader did not produce any frame before timeout.")

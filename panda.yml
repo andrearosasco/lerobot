@@ -1,52 +1,72 @@
-# To create an environment compatible with the panda setup run:
-# conda env create -f lerobot/panda.yml
-# then activate it and install the rest of the lerobot dependencies:
-# pip install -e . 
-# Intstall the oculus interface following the instructions at:
+# To create an environment compatible with the Panda setup run:
+# conda env create -f panda.yml
+# conda activate lerobot
+#
+# Install LeRobot in editable mode using the same dependency constraints from
+# pyproject.toml. For recording, prefer the matching CLI extras:
+# pip install -e ".[core_scripts]"
+# If you also enable Intel RealSense cameras in cfgs/record.yaml:
+# pip install -e ".[core_scripts,intelrealsense]"
+#
+# Install the Oculus interface following the instructions at:
 # https://github.com/rail-berkeley/oculus_reader.git
-# Finally clone the controller library and install it:
+#
+# Finally clone the Panda ROS2 controller library and install it into this env:
 # git clone https://github.com/andrearosasco/panda-ros2.git
 # cd panda-ros2 && colcon build --merge-install --install-base ${CONDA_PREFIX}
-
+#
+# If you use the Robotiq gripper, also install/build the robotiq_85 driver
+# workspace into ${CONDA_PREFIX} so robotiq_85_msgs is importable from Python.
+#
 # You can collect a dataset by running:
 # ros2 launch panda_control panda_control.launch.py
 # ros2 launch robotiq_85_driver gripper_driver.launch.py
 # to start the robot interface, and:
 # python src/lerobot/robots/custom_manipulator/record.py
 # to start the teleoperation and data collection script.
-
-# To give ethercat permissions to access the xhand
-# sudo setcap cap_net_raw+ep /home/panda-admin/miniconda3/envs/lerobot/bin/python3.10
-# getcap /home/panda-admin/miniconda3/envs/lerobot/bin/python3.10
-
+#
+# To give ethercat permissions to access the xhand:
+# sudo setcap cap_net_raw+ep /home/panda-admin/miniconda3/envs/lerobot/bin/python3.12
+# getcap /home/panda-admin/miniconda3/envs/lerobot/bin/python3.12
 
 name: lerobot
 channels:
-  - robostack-staging
+  - robostack-jazzy
   - conda-forge
+  - nodefaults
 dependencies:
-  - python=3.10
-  - ros-humble-ros-base
-  - compilers 
+  - python=3.12
+  - pip
+
+  # ROS runtime needed by the custom_manipulator Panda stack.
+  - ros-jazzy-ros-base
+  - ros-jazzy-rclpy
+  - ros-jazzy-control-msgs
+  - ros-jazzy-xacro
+
+  # Build tools for external ROS workspaces (panda-ros2, robotiq drivers, etc.).
+  - compilers
   - cmake
   - pkg-config
   - make
   - ninja
   - colcon-common-extensions
-  - ros-humble-control-msgs
   - catkin_tools
-  - librealsense=2.54.2=py310h2ab81a5_1_cuda
-  - scipy
+
+  # Runtime dependencies not installed by base `pip install -e .`.
   - ffmpeg=7.1.1
-  - numpy=1.26.4
+  - scipy>=1.14,<2.0
+  - pinocchio>=3.0.0,<4.0.0
+  - yarp
+  - yarp-python
+
   - pip:
-    - rerun-sdk==0.17.0
-    - pyserial
-    - clearconf
-    - roboticstoolbox-python
-    - panda-python
-    - debugpy
-# visuualizer dependencies 
-    - pycollada
-    - urdf-parser-py
-    - trimesh
+      - pink
+      - pyserial
+      - clearconf
+      - roboticstoolbox-python
+      - panda-python
+      - debugpy
+      - pycollada
+      - urdf-parser-py
+      - trimesh

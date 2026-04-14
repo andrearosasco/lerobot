@@ -92,12 +92,18 @@ class CustomManipulator(Robot):
     def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
             return
-            
+
+        print("[robot] Connecting gripper...", flush=True)
         self.gripper_interface.connect()
+        print("[robot] Gripper connected.", flush=True)
+        print("[robot] Connecting arm...", flush=True)
         self.arm_interface.connect()
+        print("[robot] Arm connected.", flush=True)
         
         for cam in self.cameras.values():
+            print(f"[robot] Connecting camera {cam}...", flush=True)
             cam.connect()
+            print(f"[robot] Camera {cam} connected.", flush=True)
         
         self._is_connected = True
         logger.info(f"{self} connected.")
@@ -154,6 +160,10 @@ class CustomManipulator(Robot):
     def reset(self) -> None:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        
+
+        print("[robot] Resetting arm...", flush=True)
         self.arm_interface.reset()
+        print("[robot] Arm reset complete.", flush=True)
+        print("[robot] Resetting gripper...", flush=True)
         self.gripper_interface.reset()
+        print("[robot] Gripper reset complete.", flush=True)
