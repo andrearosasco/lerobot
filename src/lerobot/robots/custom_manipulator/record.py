@@ -18,6 +18,7 @@ import importlib
 import logging
 import time
 from dataclasses import asdict
+from pathlib import Path
 from pprint import pformat
 
 from pyparsing import Optional
@@ -52,7 +53,7 @@ from lerobot.common.control_utils import (
 from lerobot.utils.utils import log_say, init_logging
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
-from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME, OBS_STR
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.policies.utils import make_robot_action
 from lerobot.policies.factory import make_policy, make_pre_post_processors
@@ -312,6 +313,18 @@ def _build_robot_processor_pipeline(
         to_output=to_output,
     )
 
+
+def _resolve_resume_root(cfg: RecordConfig) -> Path:
+    if cfg.dataset.root is not None:
+        return Path(cfg.dataset.root)
+
+    root = HF_LEROBOT_HOME / cfg.dataset.repo_id
+    logging.info(
+        "Resuming recording without `dataset.root`; using the default local dataset path: %s",
+        root,
+    )
+    return root
+
 @parser.wrap(config_path='cfgs/record.yaml')
 def record(cfg: RecordConfig):
     init_logging()
@@ -356,18 +369,19 @@ def record(cfg: RecordConfig):
     )
 
     if cfg.resume:
-        dataset = LeRobotDataset(
+        num_cameras = len(robot.cameras) if hasattr(robot, "cameras") else 0
+        dataset = LeRobotDataset.resume(
             cfg.dataset.repo_id,
-            root=cfg.dataset.root,
+            root=_resolve_resume_root(cfg),
             batch_encoding_size=cfg.dataset.video_encoding_batch_size,
+            image_writer_processes=cfg.dataset.num_image_writer_processes if num_cameras > 0 else 0,
+            image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * num_cameras
+            if num_cameras > 0
+            else 0,
         )
-        if hasattr(robot, "cameras") and len(robot.cameras) > 0:
-            dataset.start_image_writer(
-                num_processes=cfg.dataset.num_image_writer_processes,
-                num_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
-            )
         sanity_check_dataset_robot_compatibility(dataset, robot, cfg.dataset.fps, dataset_features)
     else:
+        sanity_check_dataset_name(cfg.dataset.repo_id, cfg.policy)
         dataset = LeRobotDataset.create(
             cfg.dataset.repo_id,
             cfg.dataset.fps,

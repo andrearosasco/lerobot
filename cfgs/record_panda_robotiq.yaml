@@ -5,27 +5,27 @@ robot:
     use_delta_actions: true
   gripper:
     type: robotiq
-  # cameras:
-  #   wrist:
-  #     type: intelrealsense
-  #     serial_number_or_name: "909522060544"
-  #     use_depth: false
-  #     width: 640
-  #     height: 480
-  #     fps: 30
-  #   left:
-  #     type: intelrealsense
-  #     serial_number_or_name: "123622270882"
-  #     use_depth: false
-  #     width: 640
-  #     height: 480
-  #     fps: 30
+  cameras:
+    wrist:
+      type: intelrealsense
+      serial_number_or_name: "909522060544"
+      use_depth: false
+      width: 640
+      height: 480
+      fps: 30
+    left:
+      type: intelrealsense
+      serial_number_or_name: "123622270882"
+      use_depth: false
+      width: 640
+      height: 480
+      fps: 30
 
 teleop:
   type: metaquest_rail
 
 dataset:
-  repo_id: steb6/ERASEME
+  repo_id: steb6/roboarena
   single_task: Pick the bread and place it in the plate.
   fps: 10
   episode_time_s: 2000
@@ -50,4 +50,4 @@ robot_observation_processor:
 
 display_data: true
 play_sounds: true
-resume: false
+resume: true

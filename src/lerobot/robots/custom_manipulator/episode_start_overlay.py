@@ -24,6 +24,12 @@ def _resize_like(image, shape):
     return image[y][:, x]
 def _load_episode_start_frame(dataset, dataset_camera_key, episode):
     episode_value = lambda key: episode[key][0] if isinstance(episode[key], (list, tuple)) else episode[key]
+    video_backend = getattr(dataset, "video_backend", None)
+    if video_backend is None:
+        video_backend = getattr(dataset, "_video_backend", None)
+    if video_backend is None and getattr(dataset, "reader", None) is not None:
+        video_backend = getattr(dataset.reader, "_video_backend", None)
+
     frame = decode_video_frames(
         dataset.root
         / dataset.meta.video_path.format(
@@ -33,7 +39,7 @@ def _load_episode_start_frame(dataset, dataset_camera_key, episode):
         ),
         [float(episode_value(f"videos/{dataset_camera_key}/from_timestamp"))],
         dataset.tolerance_s,
-        dataset.video_backend,
+        video_backend,
     ).squeeze(0)
     return _to_rgb_uint8(frame).astype(np.float32)
 
