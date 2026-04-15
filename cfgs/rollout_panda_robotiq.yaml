@@ -22,11 +22,17 @@ robot:
       height: 480
       fps: 30
 
-teleop: null
+teleop:
+  type: metaquest_rail
+
+teleop_action_processor:
+  steps:
+    - clutch_processor
+    - arm_absolute_to_delta
 
 policy:
   type: groot
-  pretrained_path: ar0s/groot_pick_bread_dagger
+  pretrained_path: steb6/groot_pick_test
   device: cuda
 
 dataset:
@@ -44,11 +50,6 @@ dataset:
   num_image_writer_threads_per_camera: 4
   video_encoding_batch_size: 1
   rename_map: {}
-
-teleop_action_processor:
-  steps:
-    - clutch_processor
-    - arm_absolute_to_delta
 
 robot_action_processor:
   steps: []

@@ -5,6 +5,7 @@ from typing import Any
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.robots.custom_manipulator.config_custom_manipulator import CustomManipulatorConfig
+from lerobot.robots.config import RobotConfig
 from lerobot.teleoperators import TeleoperatorConfig
 from lerobot.teleoperators.metareader import MetaReaderConfig  # noqa: F401
 from lerobot.teleoperators.metaquest.metaquest_rail.metaquest import MetaQuestRailConfig  # noqa: F401
@@ -72,7 +73,7 @@ class DatasetRecordConfig:
 
 @dataclass
 class RecordConfig:
-    robot: CustomManipulatorConfig
+    robot: RobotConfig
     dataset: DatasetRecordConfig
     # Whether to control the robot with a teleoperator
     teleop: TeleoperatorConfig | None = None
@@ -100,6 +101,12 @@ class RecordConfig:
 
         if self.teleop is None and self.policy is None:
             raise ValueError("Choose a policy, a teleoperator or both to control the robot")
+
+        if not isinstance(self.robot, CustomManipulatorConfig):
+            raise ValueError(
+                "Custom manipulator recording expects robot.type='custom_manipulator', "
+                f"got {self.robot.type!r}."
+            )
 
         if self.policy is not None and get_policy_loading_source(self.policy) is None:
             raise ValueError(get_missing_policy_source_message(self.policy))
