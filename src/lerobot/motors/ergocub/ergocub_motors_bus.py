@@ -17,8 +17,8 @@
 import logging
 import time
 
-import numpy as np
 import yarp
+from lerobot.robots.ergocub.profiles import CubRobotProfile
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from .head_controller import ErgoCubHeadController
@@ -37,6 +37,8 @@ class ErgoCubMotorsBus:
         self,
         remote_prefix: str,
         local_prefix: str,
+        urdf_path: str,
+        profile: CubRobotProfile,
         control_boards: list[str],
         state_boards: list[str],
         left_hand: bool = True,
@@ -54,6 +56,7 @@ class ErgoCubMotorsBus:
         """
         self.remote_prefix = remote_prefix
         self.local_prefix = local_prefix
+        self.profile = profile
         self.state_boards = state_boards
         self.control_boards = control_boards
         
@@ -62,11 +65,11 @@ class ErgoCubMotorsBus:
         self.controllers = {}
         
         self.controllers["bimanual"] = ErgoCubBimanualController(
-            remote_prefix, local_prefix, left_hand, right_hand
+            remote_prefix, local_prefix, urdf_path, profile, left_hand, right_hand
         )
             
         if 'head' in parts_needed:
-            self.controllers["head"] = ErgoCubHeadController(remote_prefix, local_prefix)
+            self.controllers["head"] = ErgoCubHeadController(remote_prefix, local_prefix, urdf_path, profile)
         
         # Optionally add finger controller
         if 'fingers' in parts_needed:
@@ -140,6 +143,11 @@ class ErgoCubMotorsBus:
                 continue 
             features.update(controller.motor_features)
         return features
+
+    @property
+    def motor_features(self) -> dict[str, type]:
+        """Expose a unified feature map for robots whose action/state schema matches."""
+        return self.state_features
     # ---------------------------------------------------------------------
     # Reset handling
     # ---------------------------------------------------------------------

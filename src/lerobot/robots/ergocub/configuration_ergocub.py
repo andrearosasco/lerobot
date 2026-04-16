@@ -21,14 +21,18 @@ from lerobot.cameras import CameraConfig
 from lerobot.robots.config import RobotConfig
 
 
-@RobotConfig.register_subclass("ergocub")
 @dataclass
-class ErgoCubConfig(RobotConfig):
+class CubRobotConfig(RobotConfig):
     name: str = "ergocub"
+    robot_model: str = "ergocub"
     # YARP remote prefix for observation ports
     remote_prefix: str = "/ergocubSim"
     # YARP local prefix for observation ports. A session ID will be appended.
     local_prefix: str = "/ergocub_dashboard"
+    # Optional explicit YARP robot name exposed to ResourceFinder.
+    yarp_robot_name: str | None = None
+    # Optional explicit URDF path. If unset, it is resolved from env/YARP.
+    urdf_path: str | None = None
     # Configuration for cameras (using standard LeRobot camera interface)
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
     # Enable/disable specific body parts
@@ -45,3 +49,24 @@ class ErgoCubConfig(RobotConfig):
     absolute: bool = True
     finger_scale: float = 1.0
     position_tolerance: float = 0.1  # Tolerance for safety checks, in radians or meters depending on the joint
+
+
+@RobotConfig.register_subclass("ergocub")
+@dataclass
+class ErgoCubConfig(CubRobotConfig):
+    name: str = "ergocub"
+    robot_model: str = "ergocub"
+    remote_prefix: str = "/ergocubSim"
+    local_prefix: str = "/ergocub_dashboard"
+
+
+@RobotConfig.register_subclass("r1")
+@dataclass
+class R1Config(CubRobotConfig):
+    name: str = "r1"
+    robot_model: str = "r1"
+    remote_prefix: str = "/cer"
+    local_prefix: str = "/lerobot"
+    control_boards: List[str] = field(default_factory=lambda: ["head", "bimanual"])
+    state_boards: List[str] = field(default_factory=lambda: ["head", "bimanual"])
+    position_tolerance: float = 0.22

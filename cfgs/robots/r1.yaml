@@ -1,0 +1,14 @@
+robot:
+  type: r1
+  remote_prefix: /cer
+  local_prefix: /lerobot
+  cameras:
+    egocentric:
+      type: yarp
+      yarp_name: cer/realsense/rgbImage:o
+      width: 640
+      height: 480
+      fps: 30
+  control_boards: [bimanual, head]
+  state_boards: [bimanual, head]
+  position_tolerance: 0.22

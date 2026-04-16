@@ -323,7 +323,7 @@ def record_loop(
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
     teleop_arm = teleop_keyboard = None
-    rerun_logger = log_rerun_data_ergocub if robot.name == "ergocub" else log_rerun_data
+    rerun_logger = log_rerun_data_ergocub if robot.name in ["ergocub", "r1"] else log_rerun_data
     if isinstance(teleop, list):
         teleop_keyboard = next((t for t in teleop if isinstance(t, KeyboardTeleop)), None)
         teleop_arm = next(
@@ -629,7 +629,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
                 ):
                     log_say("Reset the environment", cfg.play_sounds)
-                    if robot.name in ["unitree_g1", "ergocub"]:
+                    if robot.name in ["unitree_g1", "ergocub", "r1"]:
                         robot.reset()
 
                     record_loop(

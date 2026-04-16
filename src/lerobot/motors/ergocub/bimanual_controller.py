@@ -20,12 +20,13 @@ from typing import Dict
 
 import numpy as np
 import yarp
-from scipy.spatial.transform import Rotation as R
-from .urdf_utils import resolve_ergocub_urdf
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.model.kinematics import RobotKinematics
-from lerobot.utils.rotation import matrix_to_rotation_6d, rotation_6d_to_matrix
 import torch
+from scipy.spatial.transform import Rotation as R
+
+from lerobot.model.kinematics import RobotKinematics
+from lerobot.robots.ergocub.profiles import CubRobotProfile
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.rotation import matrix_to_rotation_6d, rotation_6d_to_matrix
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,15 @@ class ErgoCubBimanualController:
     Uses /mc-ergocub-cartesian-bimanual/rpc:i with hand side specified as string parameter.
     """
     
-    def __init__(self, remote_prefix: str, local_prefix: str, use_left_hand: bool = True, use_right_hand: bool = True):
+    def __init__(
+        self,
+        remote_prefix: str,
+        local_prefix: str,
+        urdf_path: str,
+        profile: CubRobotProfile,
+        use_left_hand: bool = True,
+        use_right_hand: bool = True,
+    ):
         """
         Initialize bimanual controller.
         
@@ -48,6 +57,10 @@ class ErgoCubBimanualController:
         """
         self.remote_prefix = remote_prefix
         self.local_prefix = local_prefix
+        self.profile = profile
+        self.torso_joint_names = list(profile.torso_joint_names)
+        self.left_arm_joint_names = list(profile.left_arm_joint_names)
+        self.right_arm_joint_names = list(profile.right_arm_joint_names)
         self.use_left_hand = use_left_hand
         self.use_right_hand = use_right_hand
         
@@ -64,15 +77,31 @@ class ErgoCubBimanualController:
         # Initialize kinematics solvers for both hands if needed
         self.kinematics_solvers = {}
         if use_left_hand or use_right_hand:
-            urdf_file = resolve_ergocub_urdf()
-            
             if use_left_hand:
-                left_joint_names = ["torso_roll", "torso_pitch", "torso_yaw", "l_shoulder_pitch", "l_shoulder_roll", "l_shoulder_yaw", "l_elbow", "l_wrist_yaw", "l_wrist_roll", "l_wrist_pitch"]
-                self.kinematics_solvers["left"] = RobotKinematics(urdf_file, "l_hand_palm", left_joint_names)
+                left_joint_names = self.torso_joint_names + self.left_arm_joint_names
+                self.kinematics_solvers["left"] = RobotKinematics(
+                    urdf_path,
+                    profile.left_hand_frame_name,
+                    left_joint_names,
+                )
                 
             if use_right_hand:
-                right_joint_names = ["torso_roll", "torso_pitch", "torso_yaw", "r_shoulder_pitch", "r_shoulder_roll", "r_shoulder_yaw", "r_elbow", "r_wrist_yaw", "r_wrist_roll", "r_wrist_pitch"]
-                self.kinematics_solvers["right"] = RobotKinematics(urdf_file, "r_hand_palm", right_joint_names)
+                right_joint_names = self.torso_joint_names + self.right_arm_joint_names
+                self.kinematics_solvers["right"] = RobotKinematics(
+                    urdf_path,
+                    profile.right_hand_frame_name,
+                    right_joint_names,
+                )
+
+    def _extract_values(self, bottle: yarp.Bottle, indices: tuple[int, ...], default_value: float = 0.0) -> list[float]:
+        values: list[float] = []
+        for idx in indices:
+            resolved_idx = idx if idx >= 0 else bottle.size() + idx
+            if 0 <= resolved_idx < bottle.size():
+                values.append(bottle.get(resolved_idx).asFloat64())
+            else:
+                values.append(default_value)
+        return values
     
     @property
     def is_connected(self) -> bool:
@@ -153,9 +182,9 @@ class ErgoCubBimanualController:
         # Read torso encoders
         torso_bottle = self.torso_encoders_port.read(False)
         if torso_bottle:
-            torso_encoders = [torso_bottle.get(i).asFloat64() for i in range(min(3, torso_bottle.size()))]
+            torso_encoders = self._extract_values(torso_bottle, self.profile.torso_state_indices)
         else:
-            torso_encoders = [0.0, 0.0, 0.0]
+            torso_encoders = [0.0] * len(self.torso_joint_names)
         self._latest_torso_encoders = torso_encoders
         
         # Read and compute poses for each hand
@@ -174,8 +203,10 @@ class ErgoCubBimanualController:
             
             # Read all available encoders (hand + fingers)
             all_encoders = [hand_bottle.get(i).asFloat64() for i in range(hand_bottle.size())]
-            # First 7 are hand joints, last 6 are finger joints
-            hand_encoders = all_encoders[:7] if len(all_encoders) >= 7 else [0.0] * 7
+            arm_joint_names = self.left_arm_joint_names if side == "left" else self.right_arm_joint_names
+            arm_joint_count = len(arm_joint_names)
+            # First N are arm joints, remaining may be finger joints.
+            hand_encoders = all_encoders[:arm_joint_count] if len(all_encoders) >= arm_joint_count else [0.0] * arm_joint_count
             self._latest_arm_encoders[side] = hand_encoders
             
             # Combine torso + hand encoders
@@ -206,26 +237,16 @@ class ErgoCubBimanualController:
         """Return latest torso/arm joint values read from YARP state ports."""
         joints: dict[str, float] = {}
 
-        torso_names = ["torso_roll", "torso_pitch", "torso_yaw"]
-        for i, name in enumerate(torso_names):
+        for i, name in enumerate(self.torso_joint_names):
             if self._latest_torso_encoders is not None and i < len(self._latest_torso_encoders):
                 joints[name] = float(self._latest_torso_encoders[i])
 
-        arm_joint_names = [
-            "shoulder_pitch",
-            "shoulder_roll",
-            "shoulder_yaw",
-            "elbow",
-            "wrist_yaw",
-            "wrist_roll",
-            "wrist_pitch",
-        ]
         for side in ("left", "right"):
             values = self._latest_arm_encoders.get(side, [])
-            prefix = "l" if side == "left" else "r"
+            arm_joint_names = self.left_arm_joint_names if side == "left" else self.right_arm_joint_names
             for i, jn in enumerate(arm_joint_names):
                 if i < len(values):
-                    joints[f"{prefix}_{jn}"] = float(values[i])
+                    joints[jn] = float(values[i])
 
         return joints
     
