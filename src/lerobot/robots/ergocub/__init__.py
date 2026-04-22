@@ -14,5 +14,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configuration_ergocub import ErgoCubConfig
-from .ergocub import ErgoCub
+from .configuration_ergocub import CubRobotConfig, ErgoCubConfig, R1Config
+from .ergocub import CubRobot, ErgoCub, R1

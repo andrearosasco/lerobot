@@ -19,16 +19,17 @@ import time
 from typing import Dict, Optional, TYPE_CHECKING
 
 import numpy as np
+import torch
 try:
     import yarp
 except ImportError as e:
     pass
 from scipy.spatial.transform import Rotation as R
-from .urdf_utils import resolve_ergocub_urdf
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+
 from lerobot.model.kinematics import RobotKinematics
+from lerobot.robots.ergocub.profiles import CubRobotProfile
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.utils.rotation import matrix_to_rotation_6d, rotation_6d_to_matrix
-import torch
 
 if TYPE_CHECKING:
     from lerobot.model.kinematics import RobotKinematics
@@ -42,7 +43,7 @@ class ErgoCubHeadController:
     Follows SO100 motor conventions but operates at orientation level.
     """
     
-    def __init__(self, remote_prefix: str, local_prefix: str):
+    def __init__(self, remote_prefix: str, local_prefix: str, urdf_path: str, profile: CubRobotProfile):
         """
         Initialize neck controller.
         
@@ -52,6 +53,9 @@ class ErgoCubHeadController:
         """
         self.remote_prefix = remote_prefix
         self.local_prefix = local_prefix
+        self.profile = profile
+        self.torso_joint_names = list(profile.torso_joint_names)
+        self.neck_joint_names = list(profile.neck_joint_names)
         self._is_connected = False
         
         # YARP ports
@@ -62,17 +66,18 @@ class ErgoCubHeadController:
         self._latest_torso_encoders: list[float] | None = None
         self._latest_neck_encoders: list[float] | None = None
 
-        # Initialize kinematics solver with torso + neck joints using shared resolver
-        urdf_file = resolve_ergocub_urdf()
-        joint_names = [
-            "torso_roll",
-            "torso_pitch",
-            "torso_yaw",
-            "neck_pitch",
-            "neck_roll",
-            "neck_yaw",
-        ]
-        self.kinematics_solver = RobotKinematics(urdf_file, "head", joint_names)
+        joint_names = self.torso_joint_names + self.neck_joint_names
+        self.kinematics_solver = RobotKinematics(urdf_path, profile.head_frame_name, joint_names)
+
+    def _extract_values_from_vector(self, vector, indices: tuple[int, ...], default_value: float = 0.0) -> list[float]:
+        values: list[float] = []
+        for idx in indices:
+            resolved_idx = idx if idx >= 0 else vector.size() + idx
+            if 0 <= resolved_idx < vector.size():
+                values.append(float(vector.get(resolved_idx)))
+            else:
+                values.append(default_value)
+        return values
     
     @property
     def is_connected(self) -> bool:
@@ -156,16 +161,14 @@ class ErgoCubHeadController:
                 logger.warning(f"Still waiting for torso encoder data (attempt {read_attempts})")
             time.sleep(0.001)  # 1 millisecond sleep
         
-        # Extract torso joint values (first 3 joints: pitch, roll, yaw)
-        torso_values = np.array([torso_bottle.get(i) for i in range(min(3, torso_bottle.size()))])
+        torso_values = np.array(self._extract_values_from_vector(torso_bottle, self.profile.torso_state_indices))
         self._latest_torso_encoders = torso_values.tolist()
         
         # Extract neck joint values and compute orientation
-        neck_values = np.array([bottle.get(i) for i in range(bottle.size())])
-        self._latest_neck_encoders = neck_values[:3].tolist()
+        neck_values = np.array(self._extract_values_from_vector(bottle, self.profile.neck_state_indices))
+        self._latest_neck_encoders = neck_values.tolist()
         
-        # Combine torso + neck joints for kinematics (6 joints total: 3 torso + 3 neck)
-        full_joint_values = np.concatenate([torso_values, neck_values[:3]])
+        full_joint_values = np.concatenate([torso_values, neck_values])
         T = self.kinematics_solver.forward_kinematics(full_joint_values.tolist())
         pose_6d = matrix_to_rotation_6d(torch.tensor(R.from_matrix(T[:3, :3]).as_matrix())).numpy()
 
@@ -182,13 +185,11 @@ class ErgoCubHeadController:
         """Return latest torso and neck joint values read from YARP state ports."""
         joints: dict[str, float] = {}
 
-        torso_names = ["torso_roll", "torso_pitch", "torso_yaw"]
-        for i, name in enumerate(torso_names):
+        for i, name in enumerate(self.torso_joint_names):
             if self._latest_torso_encoders is not None and i < len(self._latest_torso_encoders):
                 joints[name] = float(self._latest_torso_encoders[i])
 
-        neck_names = ["neck_pitch", "neck_roll", "neck_yaw"]
-        for i, name in enumerate(neck_names):
+        for i, name in enumerate(self.neck_joint_names):
             if self._latest_neck_encoders is not None and i < len(self._latest_neck_encoders):
                 joints[name] = float(self._latest_neck_encoders[i])
 
